@@ -1,54 +1,81 @@
 # WaylandConnect
 
-A native OBS Studio source for Wayland window/screen capture with a saved portal
-selection and a manual reconnect button.
+A native OBS Studio window capture source for **KDE Plasma on Wayland**, using
+KWin's window-management and screencast interfaces with PipeWire video.
 
-## Capture behavior
+## Choose a window
 
-- Adding a new **WaylandConnect** source opens the desktop's sharing chooser.
-  Select one window or screen and allow restoring on future sessions.
-- The restore token, selection identifier, and last captured dimensions are saved
-  with the source in the OBS scene collection.
-- Saved sources load disconnected, without opening a chooser at OBS startup.
-- Click the **Connect / retry capture** button immediately before the source's eye
-  button to start or retry the saved capture. Visibility remains a separate control.
-- A failed/cancelled request keeps the saved selection and leaves the source empty.
-  A successful portal restore rotates its single-use token immediately, including
-  when the subsequent video connection fails.
-- Closing the captured window, losing its PipeWire node, or closing the portal
-  session clears the video. The source keeps its last width/height for scene sizing.
-- Open source **Properties → Choose window or screen…** to select another target.
-  Cancelling keeps the previous selection. Properties also provide Connect and
-  the current connection status.
+Add **Sources → + → WaylandConnect** and open Properties. The **Window** dropdown
+lists open windows by application ID and title. Selecting one fills the application
+ID. **Refresh window list** refreshes the choices. There is no portal sharing chooser.
 
-The portal controls whether a saved selection can be restored. If it cannot,
-KDE may show its chooser again after you click Connect. There is no portal option
-that forces a silent failure instead of that chooser. Keeping a token locally
-cannot make an expired, revoked, or consumed token valid again. See the
-[ScreenCast portal specification](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html).
+You can also enter an application ID while the application is closed. The saved
+rule waits for that application instead of depending on a particular process or
+window ID. Existing sources from the earlier portal version need a new selection
+once; their scene items and last dimensions are preserved.
 
-Reconnection is user-triggered; there is no automatic retry loop. The source stays
-transparent while disconnected. Before its first frame it has a 1280×720 default
-size; afterward it retains the actual captured size.
+Properties include:
+
+| Option | Behavior |
+| --- | --- |
+| Application ID | Exact application match; filled from the window dropdown or entered manually. |
+| Title filter | Optional; empty matches any title in that application. |
+| Title matching | Contains, exact, wildcard, or regular expression. |
+| Case sensitive | Off by default. |
+| Capture cursor | On by default; include the pointer in the video. |
+| Connect on OBS startup | On by default; wait silently when the application is absent. |
+| Automatically reconnect | On by default; reconnect when a matching window returns. |
+| Move to top when focused | Off by default; raise the source item within its current scene/group. |
+| Connect / retry capture | Start waiting/capture immediately, or retry an error. Also available before the eye button. |
+| Stop capture and waiting | Stay stopped until Connect is clicked, or until the next OBS startup when startup connection is enabled. |
+
+The title filter is used to find a target. Once connected, title and focus changes
+keep the current window selected. A newly opened matching window does not take
+over an existing capture. If the selected window disappears and several windows
+match the saved rule, capture waits until the rule is narrowed or a target is chosen.
+
+Closing a window or losing its stream clears the video immediately. Disconnected
+sources stay transparent and keep their last dimensions. A source with no captured
+frames yet uses a 1280×720 default. Stream errors retry with a short delay when
+automatic reconnection is enabled; normal waiting reacts to KWin window events.
+
+## Move to top when focused
+
+Enable this per source in Properties. When its captured window gains focus:
+
+- Matching items in the current OBS scene move to the top of their immediate
+  container. Items inside nested groups move within those groups.
+- Parent groups keep their ordering relative to their siblings; they are not
+  raised as a side effect of raising a child.
+- Visibility, locking, transforms, and group membership are preserved.
+- The new ordering remains when the window loses focus.
+- A source reused in the current scene can raise each of its matching items.
+  Items in other OBS scenes are untouched.
+
+This changes the stacking order in OBS. It does not focus or raise application
+windows on the desktop.
 
 ## Requirements
 
 - Native Linux OBS Studio with its development headers, frontend API, and Qt 6 UI.
-- A Wayland session with an XDG ScreenCast portal version 4+ (for saved selections).
-- PipeWire development headers and Qt 6 Widgets/DBus development libraries.
-- A C++17 compiler, CMake 3.24+, Ninja, pkg-config, and `pgrep` (procps-ng).
+- KDE Plasma Wayland exposing `org_kde_plasma_window_management` version 17+ and
+  `zkde_screencast_unstable_v1`.
+- PipeWire and Wayland development headers, Qt 6 Widgets, a C++17 compiler,
+  CMake 3.24+, Ninja, pkg-config, and `pgrep`.
 
 On Arch Linux:
 
 ```sh
-sudo pacman -S --needed base-devel cmake ninja pkgconf obs-studio procps-ng qt6-base pipewire xdg-desktop-portal-kde
+sudo pacman -S --needed base-devel cmake ninja pkgconf obs-studio procps-ng qt6-base pipewire wayland
 ```
 
-This setup targets the system OBS installation (`/usr/bin/obs`). The install script
-does not install into Flatpak OBS; that needs a build against its runtime and
-separate packaging.
+The protocol XML files are included under `protocols/`; bindings are generated
+with `wayland-scanner`. These are KDE implementation interfaces and can change
+between Plasma versions. The plugin reports when access is unavailable. It does
+not disable compositor permission checks or modify desktop security settings.
+The installer targets native OBS (`/usr/bin/obs`), not Flatpak OBS.
 
-## Install and add the source
+## Install and update
 
 Close OBS, then run from this folder:
 
@@ -56,12 +83,17 @@ Close OBS, then run from this folder:
 ./scripts/dev.sh install
 ```
 
-Open OBS and select **Sources → + → WaylandConnect**, then choose a capture in the
-Wayland sharing dialog. Enable **Allow restoring on future sessions** so the portal
-returns a token. If persistence is not granted, the attempt ends without replacing
-the previous saved selection.
+After source changes, close OBS and run:
 
-The script installs only this plugin under:
+```sh
+./scripts/dev.sh update
+```
+
+Reopen OBS to load the replacement library. Existing sources keep their source ID
+(`waylandconnect_source`). Native plugins are not hot-reloaded. The script refuses
+to replace the library while OBS is running and requires no sudo.
+
+Installed files:
 
 ```text
 ~/.config/obs-studio/plugins/waylandconnect/
@@ -69,74 +101,15 @@ The script installs only this plugin under:
 └── data/locale/en-US.ini
 ```
 
-It respects `XDG_CONFIG_HOME`. No system files or OBS scene collections are changed
-by the installer, and it does not need sudo. OBS documents the per-user plugin
-location in its [plugins guide](https://obsproject.com/kb/plugins-guide).
+`XDG_CONFIG_HOME` is respected. `WAYLANDCONNECT_PLUGIN_DIR` overrides the individual
+plugin directory; `WAYLANDCONNECT_BUILD_DIR` overrides the build directory.
+Compile without installing with `./scripts/dev.sh build`. Builds include debug
+symbols. Launch `obs --verbose`, or `gdb --args obs --verbose`, for debugging.
+OBS's current log contains `[WaylandConnect]` messages.
 
-## Update while developing
-
-Edit the source, close OBS, then run:
-
-```sh
-./scripts/dev.sh update
-```
-
-Reopen OBS to load the replacement library. Existing WaylandConnect scene items
-continue to use the same source ID (`waylandconnect_source`). OBS does not hot-reload
-native plugins. The script refuses to install while your OBS process is running.
-
-To compile without installing:
-
-```sh
-./scripts/dev.sh build
-```
-
-Builds include debug symbols (`CMAKE_BUILD_TYPE=Debug`). For verbose OBS logs:
-
-```sh
-obs --verbose
-```
-
-Use **Help → Log Files → View Current Log** and look for `[WaylandConnect]`.
-For a debugger, launch `gdb --args obs --verbose` after installing the debug build.
-
-To stage an installation inside the project instead of the OBS configuration:
-
-```sh
-WAYLANDCONNECT_PLUGIN_DIR="$PWD/build/staged/waylandconnect" ./scripts/dev.sh install
-```
-
-`WAYLANDCONNECT_BUILD_DIR` overrides the build directory. Direct CMake builds also
-work; `cmake --install build --prefix <directory>` treats that directory as the
-individual plugin folder containing `bin/64bit` and `data`.
-
-## Remove
-
-Close OBS and remove the `waylandconnect` directory from your user plugin folder.
-Remove its sources from saved scenes if you no longer want them there.
-
-## Implementation and limits
-
-The plugin uses the standard XDG ScreenCast portal and PipeWire. It does not need
-direct access to KWin's private capture interfaces. Capture currently negotiates
-mapped BGRA/RGBA shared-memory buffers, copies them to an OBS texture, and supports
-stride, crop, and rotation metadata. GPU-only buffers and HDR formats are not
-supported. This CPU copy path prioritizes a straightforward implementation; its
-performance has not been profiled for high-resolution/high-frame-rate capture.
-
-OBS has no public API for inserting a control beside the source visibility icon.
-The row button uses Qt widget introspection for OBS 32's source-list structure,
-including source lookup through the accessibility role. It avoids private OBS C++
-symbols, but an OBS UI redesign can require updating this integration. The
-properties Connect button remains available independently.
+To remove the plugin, close OBS and remove its individual plugin directory.
 
 ## Development checks
-
-Optional integration tests use a private D-Bus portal simulator and a temporary
-PipeWire daemon with generated video. They check cancellation, token rotation,
-saved-source loading, row-button placement, rendering, disconnect clearing, and
-manual reconnection. They do not capture the desktop or open the real chooser.
-They need access to a running Wayland session to initialize libobs graphics.
 
 ```sh
 cmake -S . -B build -DWAYLANDCONNECT_BUILD_TESTS=ON
@@ -144,16 +117,35 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-## Project layout
+Integration tests run a simulated KWin Wayland server and an isolated PipeWire
+daemon with generated video. They exercise matching, settings, reconnection,
+cursor modes, rendering, and focus-driven ordering in real OBS scenes/groups.
+They use the running Wayland session only to initialize libobs graphics.
 
-- `src/plugin.cpp`: module initialization and source registration.
-- `src/waylandconnect-source.cpp`: source lifecycle, saved settings, and rendering.
-- `src/capture.cpp`: asynchronous portal requests and capture session lifecycle.
-- `src/pipewire-capture.cpp`: PipeWire video transport and disconnect handling.
-- `src/source-list.cpp`: Connect button beside the visibility control.
-- `data/locale/en-US.ini`: text shown in OBS.
-- `scripts/dev.sh`: debug build and user installation/update.
+An opt-in live test captures only its own temporary window, closes it, and opens
+a replacement to check real KWin reconnection:
+
+```sh
+QT_QPA_PLATFORM=wayland WAYLANDCONNECT_LIVE_TEST=1 ./build/waylandconnect-tests liveKWinCapture
+```
+
+## Implementation
+
+- `src/kwin-connection.cpp`: window discovery, focus events, and KWin streams.
+- `src/window-rule.cpp`: application/title matching and stable selection.
+- `src/capture.cpp`: capture lifecycle, automatic reconnection, and focus actions.
+- `src/focus-order.cpp`: ordering items inside their existing containers.
+- `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
+- `src/waylandconnect-source.cpp`: OBS properties, saved configuration, and rendering.
+- `src/source-list.cpp`: the Connect button beside the visibility control.
+
+Video uses a shared-memory CPU copy path; GPU-only buffers and HDR are unsupported.
+High-resolution/frame-rate performance has not been profiled. The source-list
+button uses Qt introspection for OBS 32's UI because the frontend API has no row
+button extension point; the Properties controls are available independently.
 
 ## License
 
 WaylandConnect is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
+
+The bundled Wayland protocol files retain their upstream licenses; see [protocols/README.md](protocols/README.md).

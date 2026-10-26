@@ -13,7 +13,7 @@ MODULE_EXPORT const char *obs_module_name() { return "WaylandConnect"; }
 
 MODULE_EXPORT const char *obs_module_description()
 {
-	return "Wayland capture with saved selection and manual reconnection";
+	return "KWin window capture with title filtering, automatic reconnection, and focus ordering";
 }
 
 bool obs_module_load()

@@ -39,16 +39,18 @@ bool PipeWireCapture::start(int fd, uint32_t node, const QString &serial)
 	nodeId = node;
 	loop = pw_thread_loop_new("waylandconnect", nullptr);
 	if (!loop) {
-		close(fd);
+		if (fd >= 0)
+			close(fd);
 		return false;
 	}
 	context = pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0);
 	if (!context) {
-		close(fd);
+		if (fd >= 0)
+			close(fd);
 		return false;
 	}
 	// connect_fd takes ownership of fd, including on failure.
-	core = pw_context_connect_fd(context, fd, nullptr, 0);
+	core = fd >= 0 ? pw_context_connect_fd(context, fd, nullptr, 0) : pw_context_connect(context, nullptr, 0);
 	if (!core)
 		return false;
 	static const pw_core_events coreEvents = [] {

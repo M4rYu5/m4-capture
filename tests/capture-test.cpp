@@ -1,4 +1,5 @@
 #include "capture.hpp"
+#include "kwin-fixture.hpp"
 #include "video-fixture.hpp"
 
 #include <obs-frontend-api.h>
@@ -8,17 +9,11 @@
 #include <QApplication>
 #include <QBoxLayout>
 #include <QCheckBox>
-#include <QDBusConnection>
-#include <QDBusMetaType>
-#include <QDBusUnixFileDescriptor>
-#include <QDBusVirtualObject>
 #include <QLabel>
 #include <QListView>
 #include <QStandardItemModel>
 #include <QTest>
 #include <QToolButton>
-
-#include <unistd.h>
 #include <wayland-client.h>
 
 void register_waylandconnect_source();
@@ -26,145 +21,21 @@ void initialize_source_list();
 void shutdown_source_list();
 
 static QWidget *mainWindow = nullptr;
+static obs_source_t *currentScene = nullptr;
+static int saves = 0;
 extern "C" void *obs_frontend_get_main_window() { return mainWindow; }
-extern "C" void obs_frontend_save() {}
+extern "C" obs_source_t *obs_frontend_get_current_scene() { return obs_source_get_ref(currentScene); }
+extern "C" void obs_frontend_save() { ++saves; }
 extern "C" const char *obs_module_text(const char *text) { return text; }
-
-struct TestStream {
-	uint node;
-	QVariantMap properties;
-};
-using TestStreams = QList<TestStream>;
-Q_DECLARE_METATYPE(TestStream)
-Q_DECLARE_METATYPE(TestStreams)
-
-static QDBusArgument &operator<<(QDBusArgument &arg, const TestStream &stream)
-{
-	arg.beginStructure();
-	arg << stream.node << stream.properties;
-	arg.endStructure();
-	return arg;
-}
-static const QDBusArgument &operator>>(const QDBusArgument &arg, TestStream &stream)
-{
-	arg.beginStructure();
-	arg >> stream.node >> stream.properties;
-	arg.endStructure();
-	return arg;
-}
-
-class FakePortal : public QDBusVirtualObject
-{
-	Q_OBJECT
-      public:
-	enum class Result { Cancel, Deny, Success, NoToken, Hold };
-	Result result = Result::Cancel;
-	int starts = 0;
-	int closes = 0;
-	QVariantMap selectedOptions;
-	QString session;
-	TestVideo *video = nullptr;
-	QString token = "rotated-token";
-	bool useSerial = false;
-	QString introspect(const QString &) const override { return {}; }
-
-	bool handleMessage(const QDBusMessage &message, const QDBusConnection &bus) override
-	{
-		auto args = message.arguments();
-		if (message.member() == "GetAll") {
-			bus.send(message.createReply(QVariantList{QVariantMap{{"version", uint(4)},
-									      {"AvailableSourceTypes", uint(3)},
-									      {"AvailableCursorModes", uint(3)}}}));
-			return true;
-		}
-		if (message.member() == "Close") {
-			++closes;
-			bus.send(message.createReply());
-			return true;
-		}
-		if (message.member() == "OpenPipeWireRemote") {
-			if (video) {
-				int fd = video->openRemote();
-				QDBusUnixFileDescriptor remote(fd);
-				close(fd);
-				bus.send(message.createReply(QVariant::fromValue(remote)));
-				return true;
-			}
-			bus.send(message.createErrorReply("org.freedesktop.portal.Error.Failed",
-							  "test video connection failure"));
-			return true;
-		}
-		if (args.isEmpty())
-			return false;
-		auto options = qdbus_cast<QVariantMap>(args.last());
-		QString sender = message.service();
-		sender.remove(':');
-		sender.replace('.', '_');
-		QString path = "/org/freedesktop/portal/desktop/request/" + sender + "/" +
-			       options.value("handle_token").toString();
-		QVariantMap results;
-		uint code = 0;
-		if (message.member() == "CreateSession") {
-			session = "/org/freedesktop/portal/desktop/session/" + sender + "/" +
-				  options.value("session_handle_token").toString();
-			results.insert("session_handle", session);
-		} else if (message.member() == "SelectSources") {
-			selectedOptions = options;
-		} else if (message.member() == "Start") {
-			++starts;
-			if (result == Result::Cancel)
-				code = 1;
-			else if (result == Result::Deny)
-				code = 2;
-			else {
-				QVariantMap streamProperties{{"id", "test-window"}};
-				if (video && useSerial)
-					streamProperties.insert("pipewire-serial",
-								QVariant::fromValue<qulonglong>(video->serial()));
-				results.insert("streams", QVariant::fromValue(TestStreams{
-							      {video ? video->nodeId() : 42, streamProperties}}));
-				if (result != Result::NoToken)
-					results.insert("restore_token", token);
-			}
-		} else
-			return false;
-		bus.send(message.createReply(QVariant::fromValue(QDBusObjectPath(path))));
-		if (message.member() == "Start" && result == Result::Hold)
-			return true;
-		QTimer::singleShot(0, this, [bus, path, code, results] {
-			auto signal = QDBusMessage::createSignal(path, "org.freedesktop.portal.Request", "Response");
-			signal << code << results;
-			bus.send(signal);
-		});
-		return true;
-	}
-};
 
 class CaptureTest : public QObject
 {
 	Q_OBJECT
-	FakePortal portal;
+	KWinFixture kwin;
+	bool live = qEnvironmentVariableIsSet("WAYLANDCONNECT_LIVE_TEST");
+	QByteArray originalRemote = qgetenv("PIPEWIRE_REMOTE");
 
-	std::shared_ptr<CaptureState> savedState()
-	{
-		auto state = std::make_shared<CaptureState>();
-		state->restoreToken = "original-token";
-		state->selectionId = "original-window";
-		state->width = 640;
-		state->height = 360;
-		state->pixels.resize(640 * 360 * 4, 255);
-		state->hasFrame = true;
-		state->status = CaptureStatus::Capturing;
-		return state;
-	}
-
-	CaptureStatus status(const std::shared_ptr<CaptureState> &state)
-	{
-		std::lock_guard<std::mutex> lock(state->mutex);
-		return state->status;
-	}
-
-	QString sourceStatus(obs_source_t *source)
+	QString status(obs_source_t *source)
 	{
 		calldata_t params{};
 		proc_handler_call(obs_source_get_proc_handler(source), "get_status", &params);
@@ -172,7 +43,20 @@ class CaptureTest : public QObject
 		calldata_free(&params);
 		return result;
 	}
-
+	void action(obs_source_t *source, const char *name)
+	{
+		calldata_t params{};
+		proc_handler_call(obs_source_get_proc_handler(source), name, &params);
+		calldata_free(&params);
+	}
+	obs_source_t *source(const char *name, const char *app = "test.app", bool raise = false, bool automatic = true)
+	{
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", app);
+		obs_data_set_bool(settings, "raise_on_focus", raise);
+		obs_data_set_bool(settings, "auto_start", automatic);
+		return obs_source_create("waylandconnect_source", name, settings, nullptr);
+	}
 	QColor renderedPixel(obs_source_t *source)
 	{
 		obs_enter_graphics();
@@ -181,8 +65,8 @@ class CaptureTest : public QObject
 		QColor result;
 		if (gs_texrender_begin(target, 160, 90)) {
 			gs_projection_push();
-			vec4 transparent{};
-			gs_clear(GS_CLEAR_COLOR, &transparent, 0, 0);
+			vec4 clear{};
+			gs_clear(GS_CLEAR_COLOR, &clear, 0, 0);
 			gs_ortho(0, 160, 0, 90, -100, 100);
 			obs_source_video_render(source);
 			gs_projection_pop();
@@ -202,168 +86,259 @@ class CaptureTest : public QObject
 	}
 
       private slots:
-	void init()
-	{
-		portal.video = nullptr;
-		portal.token = "rotated-token";
-		portal.useSerial = false;
-	}
-
-	void cleanup()
-	{
-		portal.video = nullptr;
-		shutdown_source_list();
-		mainWindow = nullptr;
-	}
-
 	void initTestCase()
 	{
-		qDBusRegisterMetaType<TestStream>();
-		qDBusRegisterMetaType<TestStreams>();
-		auto bus = QDBusConnection::sessionBus();
-		QVERIFY(bus.registerService("org.freedesktop.portal.Desktop"));
-		QVERIFY(
-		    bus.registerVirtualObject("/org/freedesktop/portal/desktop", &portal, QDBusConnection::SubPath));
-	}
-
-	void cancelledRestoreKeepsSelectionAndSize()
-	{
-		portal.result = FakePortal::Result::Cancel;
-		auto state = savedState();
-		PortalCapture capture(state, nullptr);
-		capture.start(false);
-		QVERIFY(!state->hasFrame); // Clear the old frame before waiting on the portal.
-		QTRY_VERIFY_WITH_TIMEOUT(status(state) == CaptureStatus::Failed, 3000);
-		QCOMPARE(state->restoreToken, std::string("original-token"));
-		QCOMPARE(state->selectionId, std::string("original-window"));
-		QCOMPARE(state->width, uint32_t(640));
-		QCOMPARE(state->height, uint32_t(360));
-		QVERIFY(state->pixels.empty());
-		QCOMPARE(portal.selectedOptions.value("restore_token").toString(), QString("original-token"));
-	}
-
-	void deniedNewSelectionKeepsOldTarget()
-	{
-		portal.result = FakePortal::Result::Deny;
-		auto state = savedState();
-		PortalCapture capture(state, nullptr);
-		capture.start(true);
-		QTRY_VERIFY_WITH_TIMEOUT(status(state) == CaptureStatus::Failed, 3000);
-		QVERIFY(!portal.selectedOptions.contains("restore_token"));
-		QCOMPARE(state->restoreToken, std::string("original-token"));
-		QCOMPARE(state->selectionId, std::string("original-window"));
-	}
-
-	void tokenRotatesBeforeVideoConnectionFailure()
-	{
-		portal.result = FakePortal::Result::Success;
-		auto state = savedState();
-		PortalCapture capture(state, nullptr);
-		capture.start(false);
-		QTRY_VERIFY_WITH_TIMEOUT(status(state) == CaptureStatus::Failed, 3000);
-		QCOMPARE(state->restoreToken, std::string("rotated-token"));
-		QCOMPARE(state->selectionId, std::string("test-window"));
-		QVERIFY(!state->hasFrame);
-		QCOMPARE(state->width, uint32_t(640));
-	}
-
-	void missingPersistenceDoesNotEraseToken()
-	{
-		portal.result = FakePortal::Result::NoToken;
-		auto state = savedState();
-		PortalCapture capture(state, nullptr);
-		capture.start(true);
-		QTRY_VERIFY_WITH_TIMEOUT(status(state) == CaptureStatus::Failed, 3000);
-		QCOMPARE(state->restoreToken, std::string("original-token"));
-		QCOMPARE(state->selectionId, std::string("original-window"));
-	}
-
-	void sessionClosureClearsFrameAndPreservesSize()
-	{
-		portal.result = FakePortal::Result::Hold;
-		auto state = savedState();
-		PortalCapture capture(state, nullptr);
-		int starts = portal.starts;
-		capture.start(false);
-		QTRY_VERIFY_WITH_TIMEOUT(portal.starts > starts, 3000);
-		{
-			std::lock_guard<std::mutex> lock(state->mutex);
-			state->pixels.resize(640 * 360 * 4);
-			state->hasFrame = true;
+		if (!live) {
+			QVERIFY(kwin.start());
+			qputenv("WAYLAND_DISPLAY", kwin.socketPath().toUtf8());
 		}
-		auto signal = QDBusMessage::createSignal(portal.session, "org.freedesktop.portal.Session", "Closed");
-		signal << QVariantMap();
-		QDBusConnection::sessionBus().send(signal);
-		QTRY_VERIFY_WITH_TIMEOUT(status(state) == CaptureStatus::Failed, 3000);
-		QVERIFY(!state->hasFrame);
-		QVERIFY(state->pixels.empty());
-		QCOMPARE(state->restoreToken, std::string("original-token"));
-		QCOMPARE(state->width, uint32_t(640));
-		QCOMPARE(state->height, uint32_t(360));
+		initialize_capture();
+		if (!live) {
+			kwin.add({"probe", "probe.app", "Probe", false});
+			QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 3000);
+			kwin.clear();
+		}
+	}
+	void init() { kwin.reject = true; }
+	void cleanup()
+	{
+		shutdown_source_list();
+		mainWindow = nullptr;
+		currentScene = nullptr;
+		// OBS 32 canvases own public scenes/groups in addition to our test refs.
+		// Remove those canvas refs before tearing down their child sources.
+		std::vector<OBSSource> scenes;
+		auto collect = [](void *data, obs_source_t *source) {
+			if (obs_source_is_scene(source) || obs_source_is_group(source)) {
+				auto &items = *static_cast<std::vector<OBSSource> *>(data);
+				if (std::none_of(items.begin(), items.end(),
+						 [source](const auto &item) { return item == source; }))
+					items.emplace_back(source);
+			}
+			return true;
+		};
+		obs_enum_sources(collect, &scenes);
+		obs_enum_scenes(collect, &scenes);
+		for (const auto &source : scenes)
+			obs_canvas_scene_remove(obs_group_or_scene_from_source(source));
+		scenes.clear();
+		if (!live)
+			kwin.clear();
+		qputenv("PIPEWIRE_REMOTE", originalRemote);
+		QTest::qWait(60);
+	}
+	void cleanupTestCase() { shutdown_capture(); }
+
+	void titleFiltersAndStableSelection()
+	{
+		WindowRule rule{"test.app", "Editor"};
+		WindowInfo one{"one", "test.app", "My editor", false};
+		QVERIFY(rule.matches(one));
+		rule.caseSensitive = true;
+		QVERIFY(!rule.matches(one));
+		rule.caseSensitive = false;
+		rule.mode = TitleMatch::Exact;
+		QVERIFY(!rule.matches(one));
+		rule.title = "MY EDITOR";
+		QVERIFY(rule.matches(one));
+		rule.mode = TitleMatch::Wildcard;
+		rule.title = "*edit?r";
+		QVERIFY(rule.matches(one));
+		rule.title = "*Project*";
+		QVERIFY(rule.matches({"path", "test.app", "/home/mok/Project", false}));
+		rule.mode = TitleMatch::Regex;
+		rule.title = "^my.*editor$";
+		QVERIFY(rule.matches(one));
+		rule.title = "[";
+		QVERIFY(!rule.error().isEmpty());
+		QVERIFY(!rule.matches(one));
+		rule.title.clear();
+		QVERIFY(rule.matches(one));
+		bool ambiguous;
+		WindowInfo two{"two", "test.app", "Other", true};
+		QCOMPARE(select_window({one, two}, rule, {}, {}, &ambiguous), QString());
+		QVERIFY(ambiguous);
+		QCOMPARE(select_window({one, two}, rule, {}, "one", &ambiguous), QString("one"));
+		rule.title = "does not match";
+		QCOMPARE(select_window({one, two}, rule, "one", {}, &ambiguous), QString("one"));
+		QCOMPARE(select_window({two}, rule, "one", {}, &ambiguous), QString());
 	}
 
-	void destroyingPendingCaptureClosesSession()
+	void absentWindowWaitsWithoutCaptureRequests()
 	{
-		portal.result = FakePortal::Result::Hold;
-		auto state = savedState();
-		auto capture = std::make_unique<PortalCapture>(state, nullptr);
-		int starts = portal.starts, closes = portal.closes;
-		capture->start(false);
-		QTRY_VERIFY_WITH_TIMEOUT(portal.starts > starts, 3000);
-		capture.reset();
-		QTRY_VERIFY_WITH_TIMEOUT(portal.closes > closes, 3000);
-		QCOMPARE(state->restoreToken, std::string("original-token"));
+		OBSSourceAutoRelease target = source("Absent target");
+		int requests = kwin.captureRequests;
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("waiting"), 3000);
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+		kwin.add({"arriving", "test.app", "App opened", false});
+		QTRY_COMPARE_WITH_TIMEOUT(kwin.captureRequests, requests + 1, 3000);
+		QCOMPARE(kwin.requestedWindow, QString("arriving"));
 	}
 
-	void savedSourceLoadsWithoutChooserAndRoundTripsSelection_data()
+	void stopDisarmsAndConnectRearms()
 	{
-		QTest::addColumn<QString>("token");
-		QTest::newRow("saved selection") << QString("saved-token");
-		QTest::newRow("old empty scaffold") << QString();
+		OBSSourceAutoRelease target = source("Manual stop");
+		QTRY_COMPARE(status(target), QString("waiting"));
+		action(target, "stop");
+		QTRY_COMPARE(status(target), QString("idle"));
+		int requests = kwin.captureRequests;
+		kwin.add({"manual", "test.app", "Open", false});
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
+		action(target, "connect");
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
 	}
 
-	void savedSourceLoadsWithoutChooserAndRoundTripsSelection()
+	void settingsAndPickerRoundTrip()
 	{
-		QFETCH(QString, token);
+		kwin.add({"pick", "test.app", "Window title", false});
+		QTRY_VERIFY(capture_windows().size() == 1);
+		OBSSourceAutoRelease target = source("Settings", "", true, false);
+		OBSDataAutoRelease settings = obs_source_get_settings(target);
+		auto props = obs_source_properties(target);
+		auto picker = obs_properties_get(props, "selected_window");
+		QVERIFY(picker);
+		obs_data_set_string(settings, "selected_window", "pick");
+		QVERIFY(obs_property_modified(picker, settings));
+		QCOMPARE(QString(obs_data_get_string(settings, "app_id")), QString("test.app"));
+		obs_data_set_string(settings, "title_filter", "title");
+		obs_data_set_bool(settings, "capture_cursor", false);
+		obs_source_update(target, settings);
+		obs_properties_destroy(props);
+		QTest::qWait(80);
+		OBSDataAutoRelease saved = obs_save_source(target);
+		OBSDataAutoRelease config = obs_data_get_obj(saved, "settings");
+		QCOMPARE(QString(obs_data_get_string(config, "app_id")), QString("test.app"));
+		QCOMPARE(QString(obs_data_get_string(config, "title_filter")), QString("title"));
+		QVERIFY(obs_data_get_bool(config, "raise_on_focus"));
+		QVERIFY(!obs_data_get_bool(config, "capture_cursor"));
+		QVERIFY(!obs_data_get_bool(config, "auto_start"));
+	}
+
+	void focusRaisesInsideEachContainerOnly()
+	{
+		QWidget window;
+		mainWindow = &window;
+		OBSSceneAutoRelease scene = obs_scene_create("Focus scene");
+		currentScene = obs_scene_get_source(scene);
+		OBSSourceAutoRelease target = source("Raise target", "test.app", true);
+		OBSSourceAutoRelease filler = source("Other item", "");
+		auto direct = obs_scene_add(scene, target);
+		auto group = obs_scene_add_group(scene, "Group");
+		auto groupScene = obs_sceneitem_group_get_scene(group);
+		auto grouped = obs_scene_add(groupScene, target);
+		auto sibling = obs_scene_add(groupScene, filler);
+		auto nested = obs_scene_add_group(groupScene, "Nested");
+		auto nestedScene = obs_sceneitem_group_get_scene(nested);
+		auto nestedItem = obs_scene_add(nestedScene, target);
+		obs_scene_add(nestedScene, filler);
+		obs_sceneitem_set_visible(grouped, false);
+		obs_sceneitem_set_locked(grouped, true);
+		int groupPosition = obs_sceneitem_get_order_position(group);
+		kwin.add({"focused", "test.app", "App", false});
+		QTRY_VERIFY(kwin.requestedWindow == "focused");
+		kwin.focus("focused");
+		QTRY_COMPARE(obs_sceneitem_get_order_position(direct), 1);
+		QCOMPARE(obs_sceneitem_get_order_position(grouped), 2);
+		QCOMPARE(obs_sceneitem_get_order_position(nestedItem), 1);
+		QCOMPARE(obs_sceneitem_get_scene(grouped), groupScene);
+		QCOMPARE(obs_sceneitem_get_scene(nestedItem), nestedScene);
+		QVERIFY(!obs_sceneitem_visible(grouped));
+		QVERIFY(obs_sceneitem_locked(grouped));
+		// The group retains its place relative to its siblings; only the matching root item moved past it.
+		QCOMPARE(obs_sceneitem_get_order_position(group), groupPosition - 1);
+		int position = obs_sceneitem_get_order_position(grouped);
+		kwin.focus("");
+		QTest::qWait(80);
+		QCOMPARE(obs_sceneitem_get_order_position(grouped), position);
+		obs_sceneitem_set_order_position(grouped, 0);
+		kwin.focus("focused");
+		QTRY_COMPARE(obs_sceneitem_get_order_position(grouped), 2);
+		QVERIFY(obs_sceneitem_get_order_position(sibling) < 2);
+	}
+
+	void focusOptionDefaultsOff()
+	{
+		QWidget window;
+		mainWindow = &window;
+		OBSSceneAutoRelease scene = obs_scene_create("No raise scene");
+		currentScene = obs_scene_get_source(scene);
+		OBSSourceAutoRelease target = source("No raise");
+		OBSSourceAutoRelease filler = source("Filler", "");
+		auto item = obs_scene_add(scene, target);
+		obs_scene_add(scene, filler);
+		kwin.add({"off", "test.app", "App", false});
+		QTRY_VERIFY(kwin.requestedWindow == "off");
+		kwin.focus("off");
+		QTest::qWait(100);
+		QCOMPARE(obs_sceneitem_get_order_position(item), 0);
+	}
+
+	void videoReconnectsAndKeepsSizeAndCursorChoice()
+	{
+		TestVideo video;
+		QVERIFY(video.start());
+		QVERIFY(video.startProducer());
+		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
+		kwin.reject = false;
+		kwin.videoNode = video.nodeId();
+		kwin.videoSerial = video.serial();
+		kwin.add({"first", "test.app", "First title", false});
+		OBSSourceAutoRelease target = source("Video target");
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.cursorMode, uint32_t(2));
+		QCOMPARE(obs_source_get_width(target), uint32_t(160));
+		auto pixel = renderedPixel(target);
+		QCOMPARE(pixel.alpha(), 255);
+		QVERIFY(pixel.red() > pixel.green());
+		int requests = kwin.captureRequests;
+		kwin.title("first", "Changed title");
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
+		kwin.remove("first");
+		QTRY_VERIFY(status(target) != "capturing");
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+		QCOMPARE(obs_source_get_width(target), uint32_t(160));
+		QCOMPARE(obs_source_get_height(target), uint32_t(90));
+		video.stopProducer();
+		QVERIFY(video.startProducer());
+		kwin.videoNode = video.nodeId();
+		kwin.videoSerial = video.serial();
+		kwin.add({"second", "test.app", "Reopened", false});
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.requestedWindow, QString("second"));
+		OBSDataAutoRelease settings = obs_source_get_settings(target);
+		obs_data_set_bool(settings, "capture_cursor", false);
+		obs_source_update(target, settings);
+		QTRY_COMPARE_WITH_TIMEOUT(kwin.cursorMode, uint32_t(1), 3000);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		action(target, "stop");
+		QTRY_COMPARE(status(target), QString("idle"));
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+	}
+
+	void automaticReconnectCanBeDisabled()
+	{
+		kwin.add({"no-retry", "test.app", "App", false});
 		OBSDataAutoRelease settings = obs_data_create();
-		obs_data_set_string(settings, "restore_token", token.toUtf8().constData());
-		obs_data_set_string(settings, "selection_id", "saved-window");
-		obs_data_set_int(settings, "width", 800);
-		obs_data_set_int(settings, "height", 600);
-		OBSSourceAutoRelease source =
-		    obs_source_create("waylandconnect_source", "Saved target", settings, nullptr);
-		obs_source_load(source);
-		int starts = portal.starts;
-		auto properties = obs_source_properties(source);
-		obs_properties_destroy(properties);
-		QTest::qWait(50);
-		QCOMPARE(portal.starts, starts);
-		OBSDataAutoRelease saved = obs_save_source(source);
-		auto savedSettings = obs_data_get_obj(saved, "settings");
-		QCOMPARE(QString(obs_data_get_string(savedSettings, "restore_token")), token);
-		QCOMPARE(QString(obs_data_get_string(savedSettings, "selection_id")), QString("saved-window"));
-		QCOMPARE(obs_source_get_width(source), uint32_t(800));
-		QCOMPARE(obs_source_get_height(source), uint32_t(600));
-		obs_data_release(savedSettings);
+		obs_data_set_string(settings, "app_id", "test.app");
+		obs_data_set_bool(settings, "auto_reconnect", false);
+		OBSSourceAutoRelease target =
+		    obs_source_create("waylandconnect_source", "No auto retry", settings, nullptr);
+		int requests = kwin.captureRequests;
+		QTRY_COMPARE_WITH_TIMEOUT(kwin.captureRequests, requests + 1, 3000);
+		QTRY_COMPARE(status(target), QString("failed"));
+		kwin.remove("no-retry");
+		kwin.add({"new-no-retry", "test.app", "Returned", false});
+		QTest::qWait(2100);
+		QCOMPARE(kwin.captureRequests, requests + 1);
+		action(target, "connect");
+		QTRY_COMPARE(kwin.captureRequests, requests + 2);
 	}
 
-	void newSourceOpensChooserOnlyOnce()
-	{
-		portal.result = FakePortal::Result::Cancel;
-		OBSSourceAutoRelease source =
-		    obs_source_create("waylandconnect_source", "New target", nullptr, nullptr);
-		int starts = portal.starts;
-		auto properties = obs_source_properties(source);
-		obs_properties_destroy(properties);
-		QTRY_COMPARE_WITH_TIMEOUT(portal.starts, starts + 1, 3000);
-		QTest::qWait(50);
-		properties = obs_source_properties(source);
-		obs_properties_destroy(properties);
-		QTest::qWait(50);
-		QCOMPARE(portal.starts, starts + 1);
-	}
-
-	void rowButtonGoesBeforeEyeAndTracksSource()
+	void rowButtonGoesBeforeEyeAndStartsCapture()
 	{
 		QWidget window;
 		mainWindow = &window;
@@ -371,8 +346,8 @@ class CaptureTest : public QObject
 		view.setObjectName("sources");
 		QStandardItemModel model(1, 1);
 		view.setModel(&model);
-		OBSSourceAutoRelease source =
-		    obs_source_create("waylandconnect_source", "Row target", nullptr, nullptr);
+		OBSSourceAutoRelease target = source("Row target", "test.app", false, false);
+		kwin.add({"row", "test.app", "App", false});
 		model.setData(model.index(0, 0), "Row target", Qt::AccessibleTextRole);
 		auto row = new QWidget;
 		auto layout = new QHBoxLayout(row);
@@ -386,62 +361,62 @@ class CaptureTest : public QObject
 		auto button = row->findChild<QToolButton *>("waylandconnectConnect");
 		QVERIFY(button);
 		QCOMPARE(layout->indexOf(button) + 1, layout->indexOf(eye));
-		QCOMPARE(button->property("source_uuid").toString(), QString(obs_source_get_uuid(source)));
-		portal.result = FakePortal::Result::Cancel;
-		int starts = portal.starts;
+		QCOMPARE(button->property("source_uuid").toString(), QString(obs_source_get_uuid(target)));
+		int requests = kwin.captureRequests;
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
 		button->click();
-		QTRY_COMPARE_WITH_TIMEOUT(portal.starts, starts + 1, 3000);
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
 		shutdown_source_list();
 		mainWindow = nullptr;
 	}
 
-	void videoRendersThenClearsOnDisconnectAndReconnects()
+	void liveKWinCapture()
 	{
-		TestVideo video;
-		QVERIFY(video.start());
-		QVERIFY(video.startProducer());
-		portal.video = &video;
-		portal.result = FakePortal::Result::Success;
-		OBSDataAutoRelease settings = obs_data_create();
-		obs_data_set_string(settings, "restore_token", "initial-token");
-		OBSSourceAutoRelease source =
-		    obs_source_create("waylandconnect_source", "Video target", settings, nullptr);
-		calldata_t params{};
-		proc_handler_call(obs_source_get_proc_handler(source), "connect", &params);
-		QTRY_COMPARE_WITH_TIMEOUT(sourceStatus(source), QString("capturing"), 5000);
-		QCOMPARE(obs_source_get_width(source), uint32_t(160));
-		QCOMPARE(obs_source_get_height(source), uint32_t(90));
-		auto pixel = renderedPixel(source);
-		QVERIFY(pixel.isValid());
+		if (!live)
+			QSKIP("Opt-in test captures only its own temporary Wayland window.");
+		auto makeWindow = [] {
+			auto w = std::make_unique<QWidget>(nullptr, Qt::FramelessWindowHint);
+			w->setWindowTitle("WaylandConnect live check");
+			w->setFixedSize(160, 90);
+			w->setStyleSheet("background-color: rgb(224, 128, 32)");
+			w->show();
+			return w;
+		};
+		auto window = makeWindow();
+		QTRY_VERIFY_WITH_TIMEOUT(
+		    ([&] {
+			    auto windows = capture_windows();
+			    return std::any_of(windows.begin(), windows.end(),
+					       [](const WindowInfo &w) { return w.appId == "waylandconnect-test"; });
+		    })(),
+		    5000);
+		OBSSourceAutoRelease target = source("Live target", "waylandconnect-test");
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
+		auto pixel = renderedPixel(target);
 		QCOMPARE(pixel.alpha(), 255);
 		QVERIFY(pixel.red() > pixel.green());
-		QVERIFY(pixel.green() > pixel.blue());
-		video.stopProducer();
-		QTRY_COMPARE_WITH_TIMEOUT(sourceStatus(source), QString("failed"), 3000);
-		QCOMPARE(obs_source_get_width(source), uint32_t(160));
-		QCOMPARE(obs_source_get_height(source), uint32_t(90));
-		QCOMPARE(renderedPixel(source).alpha(), 0);
-		OBSDataAutoRelease saved = obs_save_source(source);
-		OBSDataAutoRelease savedSettings = obs_data_get_obj(saved, "settings");
-		QCOMPARE(QString(obs_data_get_string(savedSettings, "restore_token")), QString("rotated-token"));
-		QVERIFY(video.startProducer());
-		portal.token = "second-token";
-		portal.useSerial = true;
-		proc_handler_call(obs_source_get_proc_handler(source), "connect", &params);
-		QTRY_COMPARE_WITH_TIMEOUT(sourceStatus(source), QString("capturing"), 5000);
-		QCOMPARE(portal.selectedOptions.value("restore_token").toString(), QString("rotated-token"));
-		QCOMPARE(renderedPixel(source).alpha(), 255);
-		calldata_free(&params);
-		portal.video = nullptr;
+		uint32_t width = obs_source_get_width(target), height = obs_source_get_height(target);
+		window.reset();
+		QTRY_VERIFY_WITH_TIMEOUT(status(target) != "capturing", 3000);
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+		QCOMPARE(obs_source_get_width(target), width);
+		QCOMPARE(obs_source_get_height(target), height);
+		window = makeWindow();
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
+		QCOMPARE(renderedPixel(target).alpha(), 255);
+		action(target, "stop");
+		QTRY_COMPARE(status(target), QString("idle"));
 	}
 };
 
 int main(int argc, char **argv)
 {
 	QApplication app(argc, argv);
+	app.setDesktopFileName("waylandconnect-test");
 	auto display = wl_display_connect(nullptr);
 	if (!display) {
-		qCritical("Tests need access to a Wayland session for libobs initialization.");
+		qCritical("Tests need a Wayland session for libobs graphics.");
 		return 1;
 	}
 	obs_set_nix_platform(OBS_NIX_PLATFORM_WAYLAND);
@@ -459,7 +434,6 @@ int main(int argc, char **argv)
 	video.range = VIDEO_RANGE_FULL;
 	if (obs_reset_video(&video) != OBS_VIDEO_SUCCESS)
 		return 1;
-	initialize_capture();
 	register_waylandconnect_source();
 	CaptureTest test;
 	int result = QTest::qExec(&test, argc, argv);

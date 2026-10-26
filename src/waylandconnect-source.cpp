@@ -1,26 +1,21 @@
 #include "capture.hpp"
-
-#include <obs-module.h>
-
 #include <algorithm>
+#include <obs-module.h>
 
 struct WaylandSource {
 	std::shared_ptr<CaptureState> state = std::make_shared<CaptureState>();
 	gs_texture_t *texture = nullptr;
-	uint32_t textureWidth = 0;
-	uint32_t textureHeight = 0;
+	uint32_t textureWidth = 0, textureHeight = 0;
 };
 
 static const char *sourceName(void *) { return obs_module_text("Source.Name"); }
-
 static void requestConnect(void *data, calldata_t *)
 {
 	queue_capture_action(static_cast<WaylandSource *>(data)->state, CaptureAction::Connect);
 }
-
-static void requestChoose(void *data, calldata_t *)
+static void requestStop(void *data, calldata_t *)
 {
-	queue_capture_action(static_cast<WaylandSource *>(data)->state, CaptureAction::Choose);
+	queue_capture_action(static_cast<WaylandSource *>(data)->state, CaptureAction::Stop);
 }
 
 static void getStatus(void *data, calldata_t *result)
@@ -28,8 +23,17 @@ static void getStatus(void *data, calldata_t *result)
 	auto state = static_cast<WaylandSource *>(data)->state;
 	std::lock_guard<std::mutex> lock(state->mutex);
 	calldata_set_string(result, "status", capture_status_name(state->status));
-	calldata_set_bool(result, "busy",
-			  state->status == CaptureStatus::Choosing || state->status == CaptureStatus::Connecting);
+	calldata_set_bool(result, "busy", state->status == CaptureStatus::Connecting);
+}
+
+static void sourceUpdate(void *opaque, obs_data_t *settings)
+{
+	auto state = static_cast<WaylandSource *>(opaque)->state;
+	{
+		std::lock_guard<std::mutex> lock(state->mutex);
+		state->config = read_capture_config(settings);
+	}
+	queue_capture_action(state, CaptureAction::Configure);
 }
 
 static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
@@ -38,12 +42,10 @@ static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
 	data->state->source = OBSGetWeakRef(source);
 	data->state->width = std::clamp<long long>(obs_data_get_int(settings, "width"), 1, 16384);
 	data->state->height = std::clamp<long long>(obs_data_get_int(settings, "height"), 1, 16384);
-	data->state->restoreToken = obs_data_get_string(settings, "restore_token");
-	data->state->selectionId = obs_data_get_string(settings, "selection_id");
-	data->state->selectionAttempted = obs_data_get_bool(settings, "selection_attempted");
+	sourceUpdate(data, settings);
 	auto handler = obs_source_get_proc_handler(source);
 	proc_handler_add(handler, "void connect()", requestConnect, data);
-	proc_handler_add(handler, "void choose_capture()", requestChoose, data);
+	proc_handler_add(handler, "void stop()", requestStop, data);
 	proc_handler_add(handler, "void get_status(out string status, out bool busy)", getStatus, data);
 	return data;
 }
@@ -64,14 +66,9 @@ static void sourceDefaults(obs_data_t *settings)
 {
 	obs_data_set_default_int(settings, "width", 1280);
 	obs_data_set_default_int(settings, "height", 720);
-}
-
-static void sourceLoad(void *opaque, obs_data_t *)
-{
-	// Loading a saved scene must never open the picker, including old empty sources.
-	auto state = static_cast<WaylandSource *>(opaque)->state;
-	std::lock_guard<std::mutex> lock(state->mutex);
-	state->selectionAttempted = true;
+	obs_data_set_default_bool(settings, "capture_cursor", true);
+	obs_data_set_default_bool(settings, "auto_start", true);
+	obs_data_set_default_bool(settings, "auto_reconnect", true);
 }
 
 static void sourceSave(void *opaque, obs_data_t *settings)
@@ -80,9 +77,7 @@ static void sourceSave(void *opaque, obs_data_t *settings)
 	std::lock_guard<std::mutex> lock(state->mutex);
 	obs_data_set_int(settings, "width", state->width);
 	obs_data_set_int(settings, "height", state->height);
-	obs_data_set_string(settings, "restore_token", state->restoreToken.c_str());
-	obs_data_set_string(settings, "selection_id", state->selectionId.c_str());
-	obs_data_set_bool(settings, "selection_attempted", state->selectionAttempted);
+	write_capture_config(settings, state->config);
 }
 
 static bool connectClicked(obs_properties_t *, obs_property_t *, void *data)
@@ -91,11 +86,32 @@ static bool connectClicked(obs_properties_t *, obs_property_t *, void *data)
 		requestConnect(data, nullptr);
 	return false;
 }
-
-static bool chooseClicked(obs_properties_t *, obs_property_t *, void *data)
+static bool stopClicked(obs_properties_t *, obs_property_t *, void *data)
 {
 	if (data)
-		requestChoose(data, nullptr);
+		requestStop(data, nullptr);
+	return false;
+}
+static bool refreshClicked(obs_properties_t *, obs_property_t *, void *) { return true; }
+
+static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, obs_data_t *settings)
+{
+	if (!opaque)
+		return false;
+	auto state = static_cast<WaylandSource *>(opaque)->state;
+	auto uuid = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
+	{
+		std::lock_guard<std::mutex> lock(state->mutex);
+		if (state->config.preferredWindow == uuid)
+			return false;
+	}
+	for (const auto &window : capture_windows())
+		if (window.uuid == uuid) {
+			if (window.appId != QString::fromUtf8(obs_data_get_string(settings, "app_id")))
+				obs_data_set_string(settings, "title_filter", "");
+			obs_data_set_string(settings, "app_id", window.appId.toUtf8().constData());
+			return true;
+		}
 	return false;
 }
 
@@ -104,31 +120,52 @@ static obs_properties_t *sourceProperties(void *opaque)
 	auto props = obs_properties_create();
 	std::string status = obs_module_text("Status.idle");
 	bool busy = false;
-	bool choose = false;
+	CaptureConfig config;
 	if (opaque) {
 		auto state = static_cast<WaylandSource *>(opaque)->state;
-		{
-			std::lock_guard<std::mutex> lock(state->mutex);
-			std::string key = std::string("Status.") + capture_status_name(state->status);
-			status = obs_module_text(key.c_str());
-			if (!state->detail.empty())
-				status += "\n" + state->detail;
-			busy = state->status == CaptureStatus::Choosing || state->status == CaptureStatus::Connecting;
-			choose = !state->selectionAttempted && state->restoreToken.empty();
-			if (choose)
-				state->selectionAttempted = true;
-		}
-		if (choose)
-			queue_capture_action(state, CaptureAction::Choose);
+		std::lock_guard<std::mutex> lock(state->mutex);
+		std::string key = std::string("Status.") + capture_status_name(state->status);
+		status = obs_module_text(key.c_str());
+		if (!state->detail.empty())
+			status += "\n" + state->detail;
+		busy = state->status == CaptureStatus::Connecting;
+		config = state->config;
 	}
 	obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
+	auto picker = obs_properties_add_list(props, "selected_window", obs_module_text("Source.Window"),
+					      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	obs_property_list_add_string(picker, obs_module_text("Source.SelectWindow"), "");
+	bool found = false;
+	for (const auto &window : capture_windows()) {
+		auto label = QStringLiteral("%1 — %2").arg(window.appId, window.title).toUtf8();
+		obs_property_list_add_string(picker, label.constData(), window.uuid.toUtf8().constData());
+		found |= window.uuid == config.preferredWindow;
+	}
+	if (!found && !config.preferredWindow.isEmpty()) {
+		auto label =
+		    QStringLiteral("%1: %2").arg(obs_module_text("Source.SavedTarget"), config.rule.appId).toUtf8();
+		obs_property_list_add_string(picker, label.constData(), config.preferredWindow.toUtf8().constData());
+	}
+	obs_property_set_modified_callback2(picker, windowSelected, opaque);
+	obs_properties_add_button2(props, "refresh_windows", obs_module_text("Source.Refresh"), refreshClicked, opaque);
+	obs_properties_add_text(props, "app_id", obs_module_text("Source.Application"), OBS_TEXT_DEFAULT);
+	obs_properties_add_text(props, "title_filter", obs_module_text("Source.Title"), OBS_TEXT_DEFAULT);
+	auto match = obs_properties_add_list(props, "title_match", obs_module_text("Source.Match"), OBS_COMBO_TYPE_LIST,
+					     OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(match, obs_module_text("Match.Contains"), int(TitleMatch::Contains));
+	obs_property_list_add_int(match, obs_module_text("Match.Exact"), int(TitleMatch::Exact));
+	obs_property_list_add_int(match, obs_module_text("Match.Wildcard"), int(TitleMatch::Wildcard));
+	obs_property_list_add_int(match, obs_module_text("Match.Regex"), int(TitleMatch::Regex));
+	obs_properties_add_bool(props, "case_sensitive", obs_module_text("Source.CaseSensitive"));
+	obs_properties_add_bool(props, "capture_cursor", obs_module_text("Source.Cursor"));
+	obs_properties_add_bool(props, "auto_start", obs_module_text("Source.AutoStart"));
+	obs_properties_add_bool(props, "auto_reconnect", obs_module_text("Source.AutoReconnect"));
+	auto focus = obs_properties_add_bool(props, "raise_on_focus", obs_module_text("Source.RaiseOnFocus"));
+	obs_property_set_long_description(focus, obs_module_text("Source.RaiseOnFocus.Help"));
 	obs_property_set_enabled(
 	    obs_properties_add_button2(props, "connect", obs_module_text("Source.Connect"), connectClicked, opaque),
 	    !busy);
-	obs_property_set_enabled(
-	    obs_properties_add_button2(props, "choose", obs_module_text("Source.Choose"), chooseClicked, opaque),
-	    !busy);
-	obs_properties_add_text(props, "restore_note", obs_module_text("Source.RestoreNote"), OBS_TEXT_INFO);
+	obs_properties_add_button2(props, "stop", obs_module_text("Source.Stop"), stopClicked, opaque);
 	return props;
 }
 
@@ -138,7 +175,6 @@ static uint32_t sourceWidth(void *opaque)
 	std::lock_guard<std::mutex> lock(state->mutex);
 	return state->width;
 }
-
 static uint32_t sourceHeight(void *opaque)
 {
 	auto state = static_cast<WaylandSource *>(opaque)->state;
@@ -186,7 +222,7 @@ void register_waylandconnect_source()
 	info.destroy = sourceDestroy;
 	info.get_defaults = sourceDefaults;
 	info.get_properties = sourceProperties;
-	info.load = sourceLoad;
+	info.update = sourceUpdate;
 	info.save = sourceSave;
 	info.get_width = sourceWidth;
 	info.get_height = sourceHeight;
