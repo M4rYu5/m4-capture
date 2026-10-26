@@ -33,7 +33,7 @@ set(CAPTURE_SOURCES
   src/video-frame.cpp src/video-frame.hpp
   src/window-rule.cpp src/window-rule.hpp
   src/focus-order.cpp
-  src/waylandconnect-source.cpp src/source-list.cpp
+  src/waylandconnect-source.cpp
   ${PROTOCOL_SOURCES}
 )
 

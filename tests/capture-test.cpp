@@ -7,18 +7,10 @@
 #include <obs-nix-platform.h>
 
 #include <QApplication>
-#include <QBoxLayout>
-#include <QCheckBox>
-#include <QLabel>
-#include <QListView>
-#include <QStandardItemModel>
 #include <QTest>
-#include <QToolButton>
 #include <wayland-client.h>
 
 void register_waylandconnect_source();
-void initialize_source_list();
-void shutdown_source_list();
 
 static QWidget *mainWindow = nullptr;
 static obs_source_t *currentScene = nullptr;
@@ -106,7 +98,6 @@ class CaptureTest : public QObject
 	}
 	void cleanup()
 	{
-		shutdown_source_list();
 		mainWindow = nullptr;
 		currentScene = nullptr;
 		// OBS 32 canvases own public scenes/groups in addition to our test refs.
@@ -406,39 +397,6 @@ class CaptureTest : public QObject
 		QCOMPARE(renderedPixel(target).alpha(), 255);
 	}
 
-	void rowButtonGoesBeforeEyeAndStartsCapture()
-	{
-		QWidget window;
-		mainWindow = &window;
-		QListView view(&window);
-		view.setObjectName("sources");
-		QStandardItemModel model(1, 1);
-		view.setModel(&model);
-		OBSSourceAutoRelease target = source("Row target", "test.app", false, false);
-		kwin.add({"row", "test.app", "App", false});
-		model.setData(model.index(0, 0), "Row target", Qt::AccessibleTextRole);
-		auto row = new QWidget;
-		auto layout = new QHBoxLayout(row);
-		layout->addWidget(new QLabel("Row target"));
-		auto eye = new QCheckBox;
-		eye->setProperty("class", "checkbox-icon indicator-visibility");
-		layout->addWidget(eye);
-		layout->addWidget(new QCheckBox);
-		view.setIndexWidget(model.index(0, 0), row);
-		initialize_source_list();
-		auto button = row->findChild<QToolButton *>("waylandconnectConnect");
-		QVERIFY(button);
-		QCOMPARE(layout->indexOf(button) + 1, layout->indexOf(eye));
-		QCOMPARE(button->property("source_uuid").toString(), QString(obs_source_get_uuid(target)));
-		int requests = kwin.captureRequests;
-		QTest::qWait(100);
-		QCOMPARE(kwin.captureRequests, requests);
-		button->click();
-		QTRY_COMPARE(kwin.captureRequests, requests + 1);
-		shutdown_source_list();
-		mainWindow = nullptr;
-	}
-
 	void liveKWinCapture()
 	{
 		if (!live)
@@ -505,7 +463,6 @@ int main(int argc, char **argv)
 	register_waylandconnect_source();
 	CaptureTest test;
 	int result = QTest::qExec(&test, argc, argv);
-	shutdown_source_list();
 	shutdown_capture();
 	obs_shutdown();
 	wl_display_disconnect(display);

@@ -27,7 +27,7 @@ Properties include:
 | Connect on OBS startup | On by default; wait silently when the application is absent. |
 | Automatically reconnect | On by default; reconnect when a matching window returns. |
 | Move to top when focused | Off by default; raise the source item within its current scene/group. |
-| Connect / retry capture | Start waiting/capture immediately, or retry an error. Also available before the eye button. |
+| Connect / retry capture | Start waiting/capture immediately, or retry an error. |
 | Stop capture and waiting | Stay stopped until Connect is clicked, or until the next OBS startup when startup connection is enabled. |
 
 The title filter is used to find a target. Once connected, title and focus changes
@@ -141,12 +141,9 @@ QT_QPA_PLATFORM=wayland WAYLANDCONNECT_LIVE_TEST=1 ./build/waylandconnect-tests 
 - `src/focus-order.cpp`: ordering items inside their existing containers.
 - `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
 - `src/waylandconnect-source.cpp`: OBS properties, saved configuration, and rendering.
-- `src/source-list.cpp`: the Connect button beside the visibility control.
 
 Video uses a shared-memory CPU copy path; GPU-only buffers and HDR are unsupported.
-High-resolution/frame-rate performance has not been profiled. The source-list
-button uses Qt introspection for OBS 32's UI because the frontend API has no row
-button extension point; the Properties controls are available independently.
+High-resolution/frame-rate performance has not been profiled.
 
 ## License
 

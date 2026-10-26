@@ -6,8 +6,6 @@ OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("waylandconnect", "en-US")
 
 void register_waylandconnect_source();
-void initialize_source_list();
-void shutdown_source_list();
 
 MODULE_EXPORT const char *obs_module_name() { return "KCow"; }
 
@@ -24,10 +22,4 @@ bool obs_module_load()
 	return true;
 }
 
-void obs_module_post_load() { initialize_source_list(); }
-
-void obs_module_unload()
-{
-	shutdown_source_list();
-	shutdown_capture();
-}
+void obs_module_unload() { shutdown_capture(); }
