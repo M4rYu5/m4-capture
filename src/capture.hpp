@@ -82,7 +82,6 @@ class KWinCapture : public QObject
 	void stopStream();
 	void failed(const QString &error);
 	void status(CaptureStatus next, const QString &detail = {});
-	void refreshProperties();
 	void persist();
 	void focused(const WindowInfo &window);
 };

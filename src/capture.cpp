@@ -15,11 +15,10 @@ KWinConnection *connection = nullptr;
 std::mutex windowsMutex;
 QList<WindowInfo> windowsSnapshot;
 
-bool requiresStreamRestart(const CaptureConfig &a, const CaptureConfig &b)
+bool requiresTargetSelection(const CaptureConfig &a, const CaptureConfig &b)
 {
 	return a.rule.appId != b.rule.appId || a.rule.title != b.rule.title || a.rule.mode != b.rule.mode ||
-	       a.rule.caseSensitive != b.rule.caseSensitive || a.preferredWindow != b.preferredWindow ||
-	       a.cursor != b.cursor;
+	       a.rule.caseSensitive != b.rule.caseSensitive || a.preferredWindow != b.preferredWindow;
 }
 
 void ensureConnection()
@@ -161,9 +160,17 @@ void KWinCapture::action(CaptureAction action)
 	CaptureConfig next;
 	{
 		std::lock_guard<std::mutex> lock(state->mutex);
+		if (action == CaptureAction::Connect && state->status == CaptureStatus::Connecting)
+			return;
 		next = state->config;
 	}
-	bool changed = !configured || requiresStreamRestart(next, config);
+	bool selectTarget = !configured || requiresTargetSelection(next, config);
+	bool restart = !configured || next.cursor != config.cursor;
+	if (selectTarget) {
+		bool ambiguous;
+		auto match = select_window(backend->windows(), next.rule, {}, next.preferredWindow, &ambiguous);
+		restart |= match != current || !next.rule.error().isEmpty();
+	}
 	if (!configured) {
 		armed = next.autoStart;
 		configured = true;
@@ -181,10 +188,11 @@ void KWinCapture::action(CaptureAction action)
 	}
 	if (action == CaptureAction::Connect) {
 		armed = true;
-		changed = true;
+		restart = true;
 	}
-	if (changed) {
+	if (selectTarget || restart)
 		retry.stop();
+	if (restart) {
 		stopStream();
 		current.clear();
 		wasFocused = false;
@@ -207,15 +215,9 @@ void KWinCapture::stopStream()
 
 void KWinCapture::status(CaptureStatus next, const QString &detail)
 {
-	bool changed;
-	{
-		std::lock_guard<std::mutex> lock(state->mutex);
-		changed = state->status != next || state->detail != detail.toStdString();
-		state->status = next;
-		state->detail = detail.toStdString();
-	}
-	if (changed)
-		refreshProperties();
+	std::lock_guard<std::mutex> lock(state->mutex);
+	state->status = next;
+	state->detail = detail.toStdString();
 }
 
 void KWinCapture::focused(const WindowInfo &window)
@@ -367,11 +369,4 @@ void KWinCapture::persist()
 	}
 	if (obs_frontend_get_main_window())
 		obs_frontend_save();
-}
-
-void KWinCapture::refreshProperties()
-{
-	auto source = OBSGetStrongRef(state->source);
-	if (source && !obs_source_removed(source))
-		obs_source_update_properties(source);
 }

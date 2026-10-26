@@ -186,27 +186,35 @@ class CaptureTest : public QObject
 		QTRY_COMPARE(kwin.captureRequests, requests + 1);
 	}
 
-	void stopRefreshesProperties()
+	void statusChangesDoNotReloadProperties()
 	{
 		kwin.deferCapture = true;
 		kwin.add({"pending", "test.app", "Pending capture", false});
 		int updates = 0;
-		OBSSourceAutoRelease target = source("Stop properties");
+		OBSSourceAutoRelease target = source("Stable properties");
 		auto handler = obs_source_get_signal_handler(target);
 		auto updated = [](void *data, calldata_t *) { ++*static_cast<int *>(data); };
-		signal_handler_connect(handler, "update_properties", updated, &updates);
+		OBSSignal updateSignal(handler, "update_properties", updated, &updates);
 		QTRY_COMPARE(status(target), QString("connecting"));
 		auto props = obs_source_properties(target);
-		QVERIFY(!obs_property_enabled(obs_properties_get(props, "connect")));
+		QVERIFY(obs_property_enabled(obs_properties_get(props, "connect")));
+		QCOMPARE(QString(obs_property_long_description(obs_properties_get(props, "status"))),
+			 QString("Status.connecting"));
+		int requests = kwin.captureRequests;
+		QVERIFY(!obs_property_button_clicked(obs_properties_get(props, "connect"), target));
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
 		obs_properties_destroy(props);
-		int before = updates;
 		action(target, "stop");
 		QTRY_COMPARE(status(target), QString("idle"));
-		QVERIFY(updates > before);
+		QCOMPARE(updates, 0);
 		props = obs_source_properties(target);
 		QVERIFY(obs_property_enabled(obs_properties_get(props, "connect")));
+		QCOMPARE(QString(obs_property_long_description(obs_properties_get(props, "status"))),
+			 QString("Status.idle"));
+		QVERIFY(!obs_property_button_clicked(obs_properties_get(props, "refresh_windows"), target));
+		QCOMPARE(updates, 1);
 		obs_properties_destroy(props);
-		signal_handler_disconnect(handler, "update_properties", updated, &updates);
 	}
 
 	void settingsAndPickerRoundTrip()
@@ -335,6 +343,64 @@ class CaptureTest : public QObject
 		action(target, "stop");
 		QTRY_COMPARE(status(target), QString("idle"));
 		QCOMPARE(renderedPixel(target).alpha(), 0);
+	}
+
+	void propertyEditsOnlyRestartCaptureWhenNeeded()
+	{
+		TestVideo video;
+		QVERIFY(video.start());
+		QVERIFY(video.startProducer());
+		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
+		kwin.reject = false;
+		kwin.videoNode = video.nodeId();
+		kwin.videoSerial = video.serial();
+		kwin.add({"editor", "test.app", "Editor", false});
+		OBSSourceAutoRelease target = source("Editing properties");
+		int updates = 0;
+		auto updated = [](void *data, calldata_t *) { ++*static_cast<int *>(data); };
+		OBSSignal updateSignal(obs_source_get_signal_handler(target), "update_properties", updated, &updates);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		int requests = kwin.captureRequests;
+		OBSDataAutoRelease settings = obs_source_get_settings(target);
+		for (const char *filter : {"E", "Ed", "Editor"}) {
+			obs_data_set_string(settings, "title_filter", filter);
+			obs_source_update(target, settings);
+			QTest::qWait(100);
+			QCOMPARE(kwin.captureRequests, requests);
+			QCOMPARE(status(target), QString("capturing"));
+			QCOMPARE(renderedPixel(target).alpha(), 255);
+		}
+		obs_data_set_int(settings, "title_match", int(TitleMatch::Exact));
+		obs_data_set_bool(settings, "case_sensitive", true);
+		obs_data_set_bool(settings, "raise_on_focus", true);
+		obs_source_update(target, settings);
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
+		kwin.add({"other", "test.app", "Other", false});
+		obs_data_set_string(settings, "title_filter", "Other");
+		obs_source_update(target, settings);
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(kwin.requestedWindow, QString("other"));
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		obs_data_set_string(settings, "title_filter", "missing");
+		obs_source_update(target, settings);
+		QTRY_COMPARE(status(target), QString("waiting"));
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+		QCOMPARE(obs_source_get_width(target), uint32_t(160));
+		QCOMPARE(obs_source_get_height(target), uint32_t(90));
+		obs_data_set_string(settings, "title_filter", "Other");
+		obs_source_update(target, settings);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		kwin.deferCapture = true;
+		obs_data_set_bool(settings, "capture_cursor", false);
+		obs_source_update(target, settings);
+		QTRY_COMPARE(status(target), QString("connecting"));
+		QTRY_COMPARE(kwin.captureRequests, requests + 3);
+		QCOMPARE(kwin.cursorMode, uint32_t(1));
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+		QCOMPARE(obs_source_get_width(target), uint32_t(160));
+		QCOMPARE(obs_source_get_height(target), uint32_t(90));
+		QCOMPARE(updates, 0);
 	}
 
 	void automaticReconnectCanBeDisabled()

@@ -93,7 +93,15 @@ static bool stopClicked(obs_properties_t *, obs_property_t *, void *data)
 		requestStop(data, nullptr);
 	return false;
 }
-static bool refreshClicked(obs_properties_t *, obs_property_t *, void *) { return true; }
+static bool refreshClicked(obs_properties_t *, obs_property_t *, void *data)
+{
+	if (data) {
+		auto source = OBSGetStrongRef(static_cast<WaylandSource *>(data)->state->source);
+		if (source)
+			obs_source_update_properties(source);
+	}
+	return false;
+}
 
 static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, obs_data_t *settings)
 {
@@ -120,7 +128,6 @@ static obs_properties_t *sourceProperties(void *opaque)
 {
 	auto props = obs_properties_create();
 	std::string status = obs_module_text("Status.idle");
-	bool busy = false;
 	CaptureConfig config;
 	if (opaque) {
 		auto state = static_cast<WaylandSource *>(opaque)->state;
@@ -129,10 +136,12 @@ static obs_properties_t *sourceProperties(void *opaque)
 		status = obs_module_text(key.c_str());
 		if (!state->detail.empty())
 			status += "\n" + state->detail;
-		busy = state->status == CaptureStatus::Connecting;
 		config = state->config;
 	}
-	obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
+	// OBS rebuilds the entire form on update_properties, interrupting edits.
+	// Keep diagnostics as an explicit snapshot instead of reloading on status changes.
+	auto statusInfo = obs_properties_add_text(props, "status", obs_module_text("Source.Status"), OBS_TEXT_INFO);
+	obs_property_set_long_description(statusInfo, status.c_str());
 	auto picker = obs_properties_add_list(props, "selected_window", obs_module_text("Source.Window"),
 					      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_list_add_string(picker, obs_module_text("Source.SelectWindow"), "");
@@ -163,9 +172,7 @@ static obs_properties_t *sourceProperties(void *opaque)
 	obs_properties_add_bool(props, "auto_reconnect", obs_module_text("Source.AutoReconnect"));
 	auto focus = obs_properties_add_bool(props, "raise_on_focus", obs_module_text("Source.RaiseOnFocus"));
 	obs_property_set_long_description(focus, obs_module_text("Source.RaiseOnFocus.Help"));
-	obs_property_set_enabled(
-	    obs_properties_add_button2(props, "connect", obs_module_text("Source.Connect"), connectClicked, opaque),
-	    !busy);
+	obs_properties_add_button2(props, "connect", obs_module_text("Source.Connect"), connectClicked, opaque);
 	obs_properties_add_button2(props, "stop", obs_module_text("Source.Stop"), stopClicked, opaque);
 	return props;
 }
