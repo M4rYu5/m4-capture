@@ -9,18 +9,18 @@ void register_waylandconnect_source();
 void initialize_source_list();
 void shutdown_source_list();
 
-MODULE_EXPORT const char *obs_module_name() { return "WaylandConnect"; }
+MODULE_EXPORT const char *obs_module_name() { return "KCow"; }
 
 MODULE_EXPORT const char *obs_module_description()
 {
-	return "KWin window capture with title filtering, automatic reconnection, and focus ordering";
+	return "Persistent window capture for OBS Studio on KDE Plasma Wayland.";
 }
 
 bool obs_module_load()
 {
 	initialize_capture();
 	register_waylandconnect_source();
-	blog(LOG_INFO, "[WaylandConnect] version %s loaded", WAYLANDCONNECT_VERSION);
+	blog(LOG_INFO, "[KCow] version %s loaded", WAYLANDCONNECT_VERSION);
 	return true;
 }
 

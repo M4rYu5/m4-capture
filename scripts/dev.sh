@@ -26,7 +26,7 @@ EOF
 
 require_obs_closed() {
     if pgrep -u "$(id -u)" -x obs >/dev/null; then
-        echo "Close OBS before installing or updating WaylandConnect." >&2
+        echo "Close OBS before installing or updating KCow." >&2
         exit 1
     fi
 }
@@ -45,8 +45,8 @@ case "${1:-help}" in
         build
         require_obs_closed
         cmake --install "$build_dir" --prefix "$plugin_dir"
-        printf '\nInstalled WaylandConnect to %s\n' "$plugin_dir"
-        echo "Open OBS, then Sources > + > WaylandConnect."
+        printf '\nInstalled KCow to %s\n' "$plugin_dir"
+        echo "Open OBS, then Sources > + > KCow (KWin Capture)."
         ;;
     help|-h|--help)
         usage

@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(waylandconnect VERSION 0.3.0 LANGUAGES C CXX)
+project(KCow VERSION 0.3.0 LANGUAGES C CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(FATAL_ERROR "WaylandConnect currently targets Linux.")
+  message(FATAL_ERROR "KCow currently targets Linux.")
 endif()
 
 find_package(libobs REQUIRED CONFIG)

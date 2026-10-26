@@ -1,11 +1,12 @@
-# WaylandConnect
+# KCow
 
-A native OBS Studio window capture source for **KDE Plasma on Wayland**, using
-KWin's window-management and screencast interfaces with PipeWire video.
+Persistent window capture for OBS Studio on KDE Plasma Wayland.
+
+KCow uses KWin's window-management and screencast interfaces with PipeWire video.
 
 ## Choose a window
 
-Add **Sources → + → WaylandConnect** and open Properties. The **Window** dropdown
+Add **Sources → + → KCow (KWin Capture)** and open Properties. The **Window** dropdown
 lists open windows by application ID and title. Selecting one fills the application
 ID. **Refresh window list** refreshes the choices. There is no portal sharing chooser.
 
@@ -93,6 +94,9 @@ Reopen OBS to load the replacement library. Existing sources keep their source I
 (`waylandconnect_source`). Native plugins are not hot-reloaded. The script refuses
 to replace the library while OBS is running and requires no sudo.
 
+The module filename, install directory, and source ID retain their original
+internal names so updates keep existing installations and saved scenes working.
+
 Installed files:
 
 ```text
@@ -105,7 +109,7 @@ Installed files:
 plugin directory; `WAYLANDCONNECT_BUILD_DIR` overrides the build directory.
 Compile without installing with `./scripts/dev.sh build`. Builds include debug
 symbols. Launch `obs --verbose`, or `gdb --args obs --verbose`, for debugging.
-OBS's current log contains `[WaylandConnect]` messages.
+OBS's current log contains `[KCow]` messages.
 
 To remove the plugin, close OBS and remove its individual plugin directory.
 
@@ -146,6 +150,6 @@ button extension point; the Properties controls are available independently.
 
 ## License
 
-WaylandConnect is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
+KCow is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
 
 The bundled Wayland protocol files retain their upstream licenses; see [protocols/README.md](protocols/README.md).

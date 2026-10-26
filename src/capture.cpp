@@ -353,7 +353,7 @@ void KWinCapture::failed(const QString &error)
 {
 	stopStream();
 	status(CaptureStatus::Failed, error);
-	blog(LOG_WARNING, "[WaylandConnect] %s", error.toUtf8().constData());
+	blog(LOG_WARNING, "[KCow] %s", error.toUtf8().constData());
 	persist();
 	if (config.autoReconnect && armed)
 		retry.start();

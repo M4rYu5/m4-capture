@@ -377,7 +377,7 @@ class CaptureTest : public QObject
 			QSKIP("Opt-in test captures only its own temporary Wayland window.");
 		auto makeWindow = [] {
 			auto w = std::make_unique<QWidget>(nullptr, Qt::FramelessWindowHint);
-			w->setWindowTitle("WaylandConnect live check");
+			w->setWindowTitle("KCow live check");
 			w->setFixedSize(160, 90);
 			w->setStyleSheet("background-color: rgb(224, 128, 32)");
 			w->show();
