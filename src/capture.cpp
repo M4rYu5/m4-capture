@@ -196,7 +196,8 @@ void KWinCapture::action(CaptureAction action)
 		retry.stop();
 	if (restart) {
 		stopStream();
-		current.clear();
+		if (selectTarget || action == CaptureAction::Connect)
+			current.clear();
 		wasFocused = false;
 		if (!armed)
 			status(CaptureStatus::Idle);
@@ -238,7 +239,12 @@ void KWinCapture::focused(const WindowInfo &window)
 
 void KWinCapture::reconcile()
 {
-	if (!state->alive || !armed)
+	if (!state->alive) {
+		// Source deletion is queued; release proxies before a disconnect destroys their display.
+		stopStream();
+		return;
+	}
+	if (!armed)
 		return;
 	if (config.rule.appId.isEmpty()) {
 		status(CaptureStatus::Idle, QStringLiteral("Choose a window or enter its application ID."));
@@ -258,16 +264,16 @@ void KWinCapture::reconcile()
 	auto windows = backend->windows();
 	bool ambiguous;
 	auto match = select_window(windows, config.rule, current, config.preferredWindow, &ambiguous);
-	if (match.isEmpty()) {
-		if (stream) {
-			stopStream();
-			if (!config.autoReconnect) {
-				armed = false;
-				status(CaptureStatus::Idle);
-				persist();
-				return;
-			}
+	if (stream && match != current) {
+		stopStream();
+		if (!config.autoReconnect) {
+			armed = false;
+			status(CaptureStatus::Idle);
+			persist();
+			return;
 		}
+	}
+	if (match.isEmpty()) {
 		current.clear();
 		wasFocused = false;
 		status(CaptureStatus::Waiting,
@@ -276,7 +282,6 @@ void KWinCapture::reconcile()
 		return;
 	}
 	if (current != match) {
-		stopStream();
 		current = match;
 		wasFocused = false;
 	}

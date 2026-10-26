@@ -1,4 +1,5 @@
 #include "capture.hpp"
+#include "kwin-connection.hpp"
 #include "kwin-fixture.hpp"
 #include "video-fixture.hpp"
 
@@ -7,6 +8,7 @@
 #include <obs-nix-platform.h>
 
 #include <QApplication>
+#include <QEvent>
 #include <QTest>
 #include <wayland-client.h>
 
@@ -419,6 +421,93 @@ class CaptureTest : public QObject
 		QCOMPARE(renderedPixel(target).alpha(), 255);
 	}
 
+	void titleMismatchWithAlternateWindow_data()
+	{
+		QTest::addColumn<bool>("automatic");
+		QTest::newRow("automatic") << true;
+		QTest::newRow("manual") << false;
+	}
+
+	void titleMismatchWithAlternateWindow()
+	{
+		QFETCH(bool, automatic);
+		TestVideo video;
+		QVERIFY(video.start());
+		QVERIFY(video.startProducer());
+		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
+		kwin.reject = false;
+		kwin.videoNode = video.nodeId();
+		kwin.videoSerial = video.serial();
+		kwin.add({"editor", "test.app", "Editor", false});
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		obs_data_set_string(settings, "title_filter", "Editor");
+		obs_data_set_bool(settings, "disconnect_on_title_mismatch", true);
+		obs_data_set_bool(settings, "auto_reconnect", automatic);
+		OBSSourceAutoRelease target =
+		    obs_source_create("waylandconnect_source", "Alternate window", settings, nullptr);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		kwin.add({"other", "test.app", "Editor two", false});
+		QTRY_COMPARE(capture_windows().size(), 2);
+		int requests = kwin.captureRequests;
+		QCOMPARE(kwin.requestedWindow, QString("editor"));
+		kwin.title("editor", "Other");
+		if (!automatic) {
+			QTRY_COMPARE(status(target), QString("idle"));
+			QCOMPARE(renderedPixel(target).alpha(), 0);
+			QCOMPARE(kwin.captureRequests, requests);
+			kwin.focus("other");
+			QTest::qWait(100);
+			QCOMPARE(status(target), QString("idle"));
+			QCOMPARE(kwin.captureRequests, requests);
+			action(target, "connect");
+		}
+		QTRY_COMPARE(kwin.requestedWindow, QString("other"));
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(renderedPixel(target).alpha(), 255);
+	}
+
+	void cursorToggleKeepsCurrentWindow_data()
+	{
+		QTest::addColumn<QString>("preferred");
+		QTest::newRow("application-rule") << QString();
+		QTest::newRow("saved-window") << QString("first");
+		QTest::newRow("stale-saved-window") << QString("closed");
+	}
+
+	void cursorToggleKeepsCurrentWindow()
+	{
+		QFETCH(QString, preferred);
+		TestVideo video;
+		QVERIFY(video.start());
+		QVERIFY(video.startProducer());
+		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
+		kwin.reject = false;
+		kwin.videoNode = video.nodeId();
+		kwin.videoSerial = video.serial();
+		kwin.add({"first", "test.app", "First", false});
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		obs_data_set_string(settings, "selected_window", preferred.toUtf8().constData());
+		OBSSourceAutoRelease target =
+		    obs_source_create("waylandconnect_source", "Cursor toggle", settings, nullptr);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		kwin.add({"other", "test.app", "Second", false});
+		QTRY_COMPARE(capture_windows().size(), 2);
+		int requests = kwin.captureRequests;
+		for (bool cursor : {false, true}) {
+			obs_data_set_bool(settings, "capture_cursor", cursor);
+			obs_source_update(target, settings);
+			++requests;
+			QTRY_COMPARE(kwin.captureRequests, requests);
+			QCOMPARE(kwin.requestedWindow, QString("first"));
+			QCOMPARE(kwin.cursorMode, uint32_t(cursor ? 2 : 1));
+			QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+			QCOMPARE(renderedPixel(target).alpha(), 255);
+		}
+	}
+
 	void propertyEditsOnlyRestartCaptureWhenNeeded()
 	{
 		TestVideo video;
@@ -535,6 +624,35 @@ class CaptureTest : public QObject
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QCOMPARE(kwin.captureRequests, requests + 1);
 		QCOMPARE(renderedPixel(target).alpha(), 255);
+	}
+
+	void releasedSourceDisconnectsBeforeControllerDeletion()
+	{
+		kwin.deferCapture = true;
+		kwin.add({"closing", "test.app", "Closing", false});
+		KWinConnection backend(nullptr);
+		QTRY_VERIFY(backend.available());
+		QTRY_COMPARE(backend.windows().size(), 1);
+		auto state = std::make_shared<CaptureState>();
+		state->config.rule.appId = "test.app";
+		auto controller = std::make_unique<KWinCapture>(state, &backend, nullptr);
+		state->controller = controller.get();
+		controller->action(CaptureAction::Configure);
+		QTRY_COMPARE(kwin.requestedWindow, QString("closing"));
+		QSocketNotifier *reader = nullptr;
+		for (auto notifier : backend.findChildren<QSocketNotifier *>())
+			if (notifier->type() == QSocketNotifier::Read)
+				reader = notifier;
+		QVERIFY(reader);
+		controller.release();
+		release_capture(state);
+		kwin.disconnectClients();
+		// Force the socket event ahead of the queued controller deletion to reproduce the race.
+		QEvent socketEvent(QEvent::SockAct);
+		QCoreApplication::sendEvent(reader, &socketEvent);
+		QVERIFY(!backend.available());
+		QCoreApplication::sendPostedEvents();
+		QVERIFY(!state->controller);
 	}
 
 	void liveKWinCapture()
