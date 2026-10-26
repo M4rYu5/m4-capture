@@ -33,7 +33,20 @@ KWinStream::KWinStream(zkde_screencast_unstable_v1 *manager, const QString &uuid
 	zkde_screencast_stream_unstable_v1_add_listener(stream, &listener, this);
 }
 
-KWinStream::~KWinStream() { zkde_screencast_stream_unstable_v1_close(stream); }
+KWinStream::~KWinStream()
+{
+	if (stream)
+		zkde_screencast_stream_unstable_v1_close(stream);
+}
+
+void KWinStream::invalidate(const QString &reason)
+{
+	if (!stream)
+		return;
+	zkde_screencast_stream_unstable_v1_close(stream);
+	stream = nullptr;
+	emit closed(reason);
+}
 
 struct KWinConnection::Window {
 	KWinConnection *owner;
@@ -94,10 +107,16 @@ void KWinConnection::open()
 
 void KWinConnection::close()
 {
+	initialized = false;
 	delete reader;
 	reader = nullptr;
 	delete writer;
 	writer = nullptr;
+	while (!streams.isEmpty()) {
+		auto stream = *streams.begin();
+		streams.remove(stream);
+		stream->invalidate(message.isEmpty() ? QStringLiteral("The KWin Wayland connection closed.") : message);
+	}
 	entries.clear();
 	if (management)
 		wl_proxy_destroy(reinterpret_cast<wl_proxy *>(management));
@@ -111,17 +130,14 @@ void KWinConnection::close()
 	screencast = nullptr;
 	registry = nullptr;
 	display = nullptr;
-	initialized = false;
 }
 
 void KWinConnection::disconnected(const QString &reason)
 {
-	// Notify controllers synchronously before destroying the display their streams use.
 	message = reason;
-	initialized = false;
-	emit changed();
 	close();
 	retry.start();
+	emit changed();
 }
 
 bool KWinConnection::available() const { return initialized && management && screencast; }
@@ -155,6 +171,8 @@ KWinStream *KWinConnection::capture(const QString &uuid, bool cursor, QObject *p
 	if (!available())
 		return nullptr;
 	auto stream = new KWinStream(screencast, uuid, cursor, parent);
+	streams.insert(stream);
+	connect(stream, &QObject::destroyed, this, [this, stream] { streams.remove(stream); });
 	return stream;
 }
 

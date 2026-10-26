@@ -33,14 +33,6 @@ void ensureConnection()
 }
 } // namespace
 
-void CaptureState::clearFrame()
-{
-	std::lock_guard<std::mutex> lock(mutex);
-	hasFrame = false;
-	frameDirty = false;
-	pixels.clear();
-}
-
 CaptureConfig read_capture_config(obs_data_t *settings)
 {
 	CaptureConfig config;
@@ -99,11 +91,6 @@ void initialize_capture()
 
 void shutdown_capture()
 {
-	// Delete controllers (and their stream proxies) before their Wayland connection.
-	if (captureContext) {
-		for (auto capture : captureContext->findChildren<KWinCapture *>(QString(), Qt::FindDirectChildrenOnly))
-			delete capture;
-	}
 	delete captureContext;
 	captureContext = nullptr;
 	connection = nullptr;
@@ -170,18 +157,19 @@ void KWinCapture::action(CaptureAction action)
 	bool restart = !configured || next.cursor != config.cursor;
 	if (selectTarget) {
 		bool ambiguous;
-		auto match = select_window(backend->windows(), next.rule, {}, next.preferredWindow, &ambiguous);
-		restart |= match != current || !next.rule.error().isEmpty();
+		auto windows = backend ? backend->windows() : QList<WindowInfo>{};
+		auto match = select_window(windows, next.rule, {}, next.preferredWindow, &ambiguous);
+		restart |= match != currentWindowUuid || !next.rule.error().isEmpty();
 	}
 	if (!configured) {
-		armed = next.autoStart;
+		connectionEnabled = next.autoStart;
 		configured = true;
 	}
 	if (!config.raiseOnFocus && next.raiseOnFocus)
 		wasFocused = false;
 	config = next;
 	if (action == CaptureAction::Stop) {
-		armed = false;
+		connectionEnabled = false;
 		retry.stop();
 		stopStream();
 		status(CaptureStatus::Idle);
@@ -189,7 +177,7 @@ void KWinCapture::action(CaptureAction action)
 		return;
 	}
 	if (action == CaptureAction::Connect) {
-		armed = true;
+		connectionEnabled = true;
 		restart = true;
 	}
 	if (selectTarget || restart)
@@ -197,9 +185,9 @@ void KWinCapture::action(CaptureAction action)
 	if (restart) {
 		stopStream();
 		if (selectTarget || action == CaptureAction::Connect)
-			current.clear();
+			currentWindowUuid.clear();
 		wasFocused = false;
-		if (!armed)
+		if (!connectionEnabled)
 			status(CaptureStatus::Idle);
 	}
 	reconcile();
@@ -211,9 +199,9 @@ void KWinCapture::stopStream()
 	deadline.stop();
 	pipewire.reset();
 	stream.reset();
-	if (backend->available())
+	if (backend && backend->available())
 		backend->flush();
-	state->clearFrame();
+	state->frames->clear();
 }
 
 void KWinCapture::status(CaptureStatus next, const QString &detail)
@@ -240,21 +228,22 @@ void KWinCapture::focused(const WindowInfo &window)
 void KWinCapture::reconcile()
 {
 	if (!state->alive) {
-		// Source deletion is queued; release proxies before a disconnect destroys their display.
+		// Source deletion is queued; stop producing frames while awaiting controller deletion.
 		stopStream();
 		return;
 	}
-	if (!armed)
+	if (!connectionEnabled)
 		return;
 	if (config.rule.appId.isEmpty()) {
 		status(CaptureStatus::Idle, QStringLiteral("Choose a window or enter its application ID."));
 		return;
 	}
-	if (!backend->available()) {
+	if (!backend || !backend->available()) {
+		auto error = backend ? backend->error() : QStringLiteral("The KWin connection was destroyed.");
 		if (stream)
-			failed(backend->error());
+			failed(error);
 		else
-			status(CaptureStatus::Failed, backend->error());
+			status(CaptureStatus::Failed, error);
 		return;
 	}
 	if (!config.rule.error().isEmpty()) {
@@ -263,30 +252,30 @@ void KWinCapture::reconcile()
 	}
 	auto windows = backend->windows();
 	bool ambiguous;
-	auto match = select_window(windows, config.rule, current, config.preferredWindow, &ambiguous);
-	if (stream && match != current) {
+	auto match = select_window(windows, config.rule, currentWindowUuid, config.preferredWindow, &ambiguous);
+	if (stream && match != currentWindowUuid) {
 		stopStream();
 		if (!config.autoReconnect) {
-			armed = false;
+			connectionEnabled = false;
 			status(CaptureStatus::Idle);
 			persist();
 			return;
 		}
 	}
 	if (match.isEmpty()) {
-		current.clear();
+		currentWindowUuid.clear();
 		wasFocused = false;
 		status(CaptureStatus::Waiting,
 		       ambiguous ? QStringLiteral("Several windows match. Narrow the title filter or choose a window.")
 				 : QStringLiteral("Waiting for a matching window."));
 		return;
 	}
-	if (current != match) {
-		current = match;
+	if (currentWindowUuid != match) {
+		currentWindowUuid = match;
 		wasFocused = false;
 	}
 	for (const auto &window : windows)
-		if (window.uuid == current)
+		if (window.uuid == currentWindowUuid)
 			focused(window);
 	if (!stream && !retry.isActive())
 		startStream();
@@ -295,7 +284,7 @@ void KWinCapture::reconcile()
 void KWinCapture::startStream()
 {
 	status(CaptureStatus::Connecting);
-	stream.reset(backend->capture(current, config.cursor, this));
+	stream.reset(backend->capture(currentWindowUuid, config.cursor, this));
 	if (!stream) {
 		failed(backend->error());
 		return;
@@ -303,51 +292,60 @@ void KWinCapture::startStream()
 	const auto attempt = generation;
 	connect(
 	    stream.get(), &KWinStream::closed, this,
-	    [this, attempt](const QString &error) {
-		    if (generation == attempt)
-			    failed(error);
-	    },
-	    Qt::QueuedConnection);
+	    [this, attempt](const QString &error) { streamFailed(attempt, error); }, Qt::QueuedConnection);
 	connect(
 	    stream.get(), &KWinStream::ready, this,
-	    [this, attempt](uint32_t node, const QString &serial) {
-		    if (generation != attempt || !state->alive)
-			    return;
-		    pipewire = std::make_unique<PipeWireCapture>(
-			state,
-			[this, attempt](QString error) {
-				QMetaObject::invokeMethod(
-				    this,
-				    [this, attempt, error] {
-					    if (generation == attempt)
-						    failed(error);
-				    },
-				    Qt::QueuedConnection);
-			},
-			[this, attempt](CaptureStatus next) {
-				QMetaObject::invokeMethod(
-				    this,
-				    [this, attempt, next] {
-					    if (generation != attempt)
-						    return;
-					    status(next);
-					    if (next == CaptureStatus::Capturing) {
-						    deadline.stop();
-						    persist();
-					    }
-				    },
-				    Qt::QueuedConnection);
-			});
-		    if (!pipewire->start(-1, node, serial)) {
-			    failed(QStringLiteral("Could not connect to the KWin PipeWire stream."));
-			    return;
-		    }
-		    deadline.start();
-	    },
+	    [this, attempt](uint32_t node, const QString &serial) { streamReady(attempt, node, serial); },
 	    Qt::QueuedConnection);
 	backend->flush();
 	if (stream)
 		deadline.start();
+}
+
+void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &serial)
+{
+	if (generation != attempt || !state->alive)
+		return;
+	pipewire = std::make_unique<PipeWireCapture>(
+	    state->frames,
+	    [this, attempt](QString error) {
+		    QMetaObject::invokeMethod(
+			this, [this, attempt, error] { streamFailed(attempt, error); }, Qt::QueuedConnection);
+	    },
+	    [this, attempt](PipeWireStatus next) {
+		    QMetaObject::invokeMethod(
+			this, [this, attempt, next] { streamStatusChanged(attempt, next); }, Qt::QueuedConnection);
+	    });
+	if (!pipewire->start(-1, node, serial)) {
+		failed(QStringLiteral("Could not connect to the KWin PipeWire stream."));
+		return;
+	}
+	deadline.start();
+}
+
+void KWinCapture::streamFailed(uint64_t attempt, const QString &error)
+{
+	if (generation == attempt && state->alive)
+		failed(error);
+}
+
+void KWinCapture::streamStatusChanged(uint64_t attempt, PipeWireStatus next)
+{
+	if (generation != attempt || !state->alive)
+		return;
+	switch (next) {
+	case PipeWireStatus::Connecting:
+		status(CaptureStatus::Connecting);
+		break;
+	case PipeWireStatus::Paused:
+		status(CaptureStatus::Idle);
+		break;
+	case PipeWireStatus::Streaming:
+		status(CaptureStatus::Capturing);
+		deadline.stop();
+		persist();
+		break;
+	}
 }
 
 void KWinCapture::failed(const QString &error)
@@ -356,10 +354,10 @@ void KWinCapture::failed(const QString &error)
 	status(CaptureStatus::Failed, error);
 	blog(LOG_WARNING, "[KCow] %s", error.toUtf8().constData());
 	persist();
-	if (config.autoReconnect && armed)
+	if (config.autoReconnect && connectionEnabled)
 		retry.start();
 	else
-		armed = false;
+		connectionEnabled = false;
 }
 
 void KWinCapture::persist()
@@ -371,9 +369,10 @@ void KWinCapture::persist()
 	{
 		std::lock_guard<std::mutex> lock(state->mutex);
 		write_capture_config(settings, state->config);
-		obs_data_set_int(settings, "width", state->width);
-		obs_data_set_int(settings, "height", state->height);
 	}
+	auto size = state->frames->size();
+	obs_data_set_int(settings, "width", size.width);
+	obs_data_set_int(settings, "height", size.height);
 	if (obs_frontend_get_main_window())
 		obs_frontend_save();
 }

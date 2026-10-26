@@ -4,7 +4,7 @@
 
 struct WaylandSource {
 	std::shared_ptr<CaptureState> state = std::make_shared<CaptureState>();
-	std::vector<uint8_t> uploadPixels;
+	VideoFrame uploadFrame;
 	gs_texture_t *texture = nullptr;
 	uint32_t textureWidth = 0, textureHeight = 0;
 };
@@ -41,8 +41,9 @@ static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
 {
 	auto data = new WaylandSource;
 	data->state->source = OBSGetWeakRef(source);
-	data->state->width = std::clamp<long long>(obs_data_get_int(settings, "width"), 1, 16384);
-	data->state->height = std::clamp<long long>(obs_data_get_int(settings, "height"), 1, 16384);
+	data->state->frames =
+	    std::make_shared<FrameBuffer>(std::clamp<long long>(obs_data_get_int(settings, "width"), 1, 16384),
+					  std::clamp<long long>(obs_data_get_int(settings, "height"), 1, 16384));
 	sourceUpdate(data, settings);
 	auto handler = obs_source_get_proc_handler(source);
 	proc_handler_add(handler, "void connect()", requestConnect, data);
@@ -77,8 +78,9 @@ static void sourceSave(void *opaque, obs_data_t *settings)
 {
 	auto state = static_cast<WaylandSource *>(opaque)->state;
 	std::lock_guard<std::mutex> lock(state->mutex);
-	obs_data_set_int(settings, "width", state->width);
-	obs_data_set_int(settings, "height", state->height);
+	auto size = state->frames->size();
+	obs_data_set_int(settings, "width", size.width);
+	obs_data_set_int(settings, "height", size.height);
 	write_capture_config(settings, state->config);
 }
 
@@ -191,34 +193,24 @@ static obs_properties_t *sourceProperties(void *opaque)
 static uint32_t sourceWidth(void *opaque)
 {
 	auto state = static_cast<WaylandSource *>(opaque)->state;
-	std::lock_guard<std::mutex> lock(state->mutex);
-	return state->width;
+	return state->frames->size().width;
 }
 static uint32_t sourceHeight(void *opaque)
 {
 	auto state = static_cast<WaylandSource *>(opaque)->state;
-	std::lock_guard<std::mutex> lock(state->mutex);
-	return state->height;
+	return state->frames->size().height;
 }
 
 static void sourceRender(void *opaque, gs_effect_t *)
 {
 	auto data = static_cast<WaylandSource *>(opaque);
 	auto state = data->state;
-	uint32_t width, height;
-	bool upload;
-	{
-		std::lock_guard<std::mutex> lock(state->mutex);
-		if (!state->hasFrame)
-			return;
-		width = state->width;
-		height = state->height;
-		upload = state->frameDirty;
-		if (upload) {
-			data->uploadPixels.swap(state->pixels);
-			state->frameDirty = false;
-		}
-	}
+	auto update = state->frames->take(data->uploadFrame);
+	if (update == FrameBuffer::Update::Empty)
+		return;
+	auto width = data->uploadFrame.width;
+	auto height = data->uploadFrame.height;
+	bool upload = update == FrameBuffer::Update::Updated;
 	if (!data->texture || data->textureWidth != width || data->textureHeight != height) {
 		gs_texture_destroy(data->texture);
 		data->texture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, GS_DYNAMIC);
@@ -229,7 +221,7 @@ static void sourceRender(void *opaque, gs_effect_t *)
 	if (!data->texture)
 		return;
 	if (upload)
-		gs_texture_set_image(data->texture, data->uploadPixels.data(), width * 4, false);
+		gs_texture_set_image(data->texture, data->uploadFrame.pixels.data(), width * 4, false);
 
 	auto effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	bool previous = gs_framebuffer_srgb_enabled();

@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QEvent>
+#include <QSignalSpy>
 #include <QTest>
 #include <wayland-client.h>
 
@@ -125,48 +126,6 @@ class CaptureTest : public QObject
 		QTest::qWait(60);
 	}
 	void cleanupTestCase() { shutdown_capture(); }
-
-	void titleFiltersAndStableSelection()
-	{
-		WindowRule rule{"test.app", "Editor"};
-		WindowInfo one{"one", "test.app", "My editor", false};
-		QVERIFY(rule.matches(one));
-		rule.caseSensitive = true;
-		QVERIFY(!rule.matches(one));
-		rule.caseSensitive = false;
-		rule.mode = TitleMatch::Exact;
-		QVERIFY(!rule.matches(one));
-		rule.title = "MY EDITOR";
-		QVERIFY(rule.matches(one));
-		rule.mode = TitleMatch::Wildcard;
-		rule.title = "*edit?r";
-		QVERIFY(rule.matches(one));
-		rule.title = "*Project*";
-		QVERIFY(rule.matches({"path", "test.app", "/home/mok/Project", false}));
-		rule.mode = TitleMatch::Regex;
-		rule.title = "^my.*editor$";
-		QVERIFY(rule.matches(one));
-		rule.title = "[";
-		QVERIFY(!rule.error().isEmpty());
-		QVERIFY(!rule.matches(one));
-		rule.title.clear();
-		QVERIFY(rule.matches(one));
-		bool ambiguous;
-		WindowInfo two{"two", "test.app", "Other", true};
-		QCOMPARE(select_window({one, two}, rule, {}, {}, &ambiguous), QString());
-		QVERIFY(ambiguous);
-		QCOMPARE(select_window({one, two}, rule, {}, "one", &ambiguous), QString("one"));
-		rule.title = "does not match";
-		QCOMPARE(select_window({one, two}, rule, "one", {}, &ambiguous), QString("one"));
-		QCOMPARE(select_window({two}, rule, "one", {}, &ambiguous), QString());
-		rule.disconnectOnTitleMismatch = true;
-		QCOMPARE(select_window({one, two}, rule, "one", "one", &ambiguous), QString());
-		rule.mode = TitleMatch::Contains;
-		rule.title = "Other";
-		QCOMPARE(select_window({one, two}, rule, "one", "one", &ambiguous), QString("two"));
-		rule.title.clear();
-		QCOMPARE(select_window({one, two}, rule, "one", {}, &ambiguous), QString("one"));
-	}
 
 	void absentWindowWaitsWithoutCaptureRequests()
 	{
@@ -653,6 +612,55 @@ class CaptureTest : public QObject
 		QVERIFY(!backend.available());
 		QCoreApplication::sendPostedEvents();
 		QVERIFY(!state->controller);
+	}
+
+	void streamOutlivesBackend_data()
+	{
+		QTest::addColumn<bool>("disconnectFirst");
+		QTest::newRow("connection-destroyed") << false;
+		QTest::newRow("connection-disconnected") << true;
+	}
+
+	void streamOutlivesBackend()
+	{
+		QFETCH(bool, disconnectFirst);
+		kwin.deferCapture = true;
+		kwin.add({"retained", "test.app", "Retained stream", false});
+		auto backend = std::make_unique<KWinConnection>(nullptr);
+		QTRY_VERIFY(backend->available());
+		// No controller or changed() observer participates in stream teardown.
+		std::unique_ptr<KWinStream> stream(backend->capture("retained", true, nullptr));
+		QVERIFY(stream);
+		QSignalSpy closed(stream.get(), &KWinStream::closed);
+		backend->flush();
+		QTRY_COMPARE(kwin.requestedWindow, QString("retained"));
+		if (disconnectFirst) {
+			kwin.disconnectClients();
+			QTRY_VERIFY(!backend->available());
+			QCOMPARE(closed.count(), 1);
+		}
+		backend.reset();
+		QCOMPARE(closed.count(), 1);
+		stream.reset();
+	}
+
+	void controllerOutlivesBackend()
+	{
+		kwin.deferCapture = true;
+		kwin.add({"controller", "test.app", "Controller lifetime", false});
+		auto backend = std::make_unique<KWinConnection>(nullptr);
+		QTRY_VERIFY(backend->available());
+		QTRY_COMPARE(backend->windows().size(), 1);
+		auto state = std::make_shared<CaptureState>();
+		state->config.rule.appId = "test.app";
+		auto controller = std::make_unique<KWinCapture>(state, backend.get(), nullptr);
+		controller->action(CaptureAction::Configure);
+		QTRY_COMPARE(kwin.requestedWindow, QString("controller"));
+		backend.reset();
+		QTRY_COMPARE(state->status, CaptureStatus::Failed);
+		controller->action(CaptureAction::Connect);
+		QCOMPARE(state->status, CaptureStatus::Failed);
+		controller.reset();
 	}
 
 	void liveKWinCapture()

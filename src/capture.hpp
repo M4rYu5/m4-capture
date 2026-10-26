@@ -1,5 +1,6 @@
 #pragma once
 
+#include "frame-buffer.hpp"
 #include "window-rule.hpp"
 
 #include <QObject>
@@ -10,12 +11,12 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
-#include <vector>
 
 class KWinCapture;
 class KWinConnection;
 class KWinStream;
 class PipeWireCapture;
+enum class PipeWireStatus;
 
 enum class CaptureStatus { Idle, Waiting, Connecting, Capturing, Failed };
 enum class CaptureAction { Configure, Connect, Stop };
@@ -30,20 +31,16 @@ struct CaptureConfig {
 };
 
 struct CaptureState {
+	// Protects settings and diagnostics; frames have their own synchronization.
 	std::mutex mutex;
 	CaptureConfig config;
-	std::vector<uint8_t> pixels;
-	uint32_t width = 1280;
-	uint32_t height = 720;
-	bool hasFrame = false;
-	bool frameDirty = false;
+	std::shared_ptr<FrameBuffer> frames = std::make_shared<FrameBuffer>();
 	CaptureStatus status = CaptureStatus::Idle;
 	std::string detail;
 	std::atomic<bool> alive{true};
 	OBSWeakSource source;
 	// Only touched on the Qt UI thread.
 	QPointer<KWinCapture> controller;
-	void clearFrame();
 };
 
 void initialize_capture();
@@ -66,19 +63,25 @@ class KWinCapture : public QObject
 
       private:
 	std::shared_ptr<CaptureState> state;
-	KWinConnection *backend;
+	QPointer<KWinConnection> backend;
 	CaptureConfig config;
 	std::unique_ptr<KWinStream> stream;
 	std::unique_ptr<PipeWireCapture> pipewire;
 	QTimer retry;
 	QTimer deadline;
-	QString current;
+	// The selected window survives stream restarts (for example, cursor changes).
+	QString currentWindowUuid;
+	// Incremented before teardown so callbacks from older attempts are ignored.
 	uint64_t generation = 0;
+	// Startup settings arm capture only once; subsequent edits preserve manual stops.
 	bool configured = false;
-	bool armed = false;
+	bool connectionEnabled = false;
 	bool wasFocused = false;
 	void reconcile();
 	void startStream();
+	void streamReady(uint64_t attempt, uint32_t node, const QString &serial);
+	void streamFailed(uint64_t attempt, const QString &error);
+	void streamStatusChanged(uint64_t attempt, PipeWireStatus next);
 	void stopStream();
 	void failed(const QString &error);
 	void status(CaptureStatus next, const QString &detail = {});

@@ -6,9 +6,9 @@
 
 #include <unistd.h>
 
-PipeWireCapture::PipeWireCapture(std::shared_ptr<CaptureState> state, std::function<void(QString)> failed,
-				 std::function<void(CaptureStatus)> changed)
-    : state(std::move(state)), failed(std::move(failed)), changed(std::move(changed))
+PipeWireCapture::PipeWireCapture(std::shared_ptr<FrameBuffer> frames, std::function<void(QString)> failed,
+				 std::function<void(PipeWireStatus)> changed)
+    : frames(std::move(frames)), failed(std::move(failed)), changed(std::move(changed))
 {
 }
 
@@ -112,7 +112,7 @@ void PipeWireCapture::fail(const QString &message)
 	if (stopping || failedOnce)
 		return;
 	failedOnce = true;
-	state->clearFrame();
+	frames->clear();
 	failed(message);
 }
 
@@ -122,8 +122,8 @@ void PipeWireCapture::onState(void *data, pw_stream_state old, pw_stream_state n
 	if (next == PW_STREAM_STATE_ERROR || next == PW_STREAM_STATE_UNCONNECTED)
 		self->fail(QStringLiteral("PipeWire stream disconnected: %1").arg(error ? error : "closed"));
 	else if (next == PW_STREAM_STATE_PAUSED) {
-		self->state->clearFrame();
-		self->changed(old == PW_STREAM_STATE_STREAMING ? CaptureStatus::Idle : CaptureStatus::Connecting);
+		self->frames->clear();
+		self->changed(old == PW_STREAM_STATE_STREAMING ? PipeWireStatus::Paused : PipeWireStatus::Connecting);
 	}
 }
 
@@ -150,8 +150,8 @@ void PipeWireCapture::onParam(void *data, uint32_t id, const spa_pod *param)
 void PipeWireCapture::formatChanged(const spa_pod *param)
 {
 	format = {};
-	state->clearFrame();
-	changed(CaptureStatus::Connecting);
+	frames->clear();
+	changed(PipeWireStatus::Connecting);
 	if (!param)
 		return;
 	if (spa_format_video_raw_parse(param, &format) < 0 || !supported_video_format(format)) {
@@ -191,18 +191,11 @@ void PipeWireCapture::process()
 	}
 	if (!latest)
 		return;
-	if (!failedOnce && state->alive && format.size.width && format.size.height) {
+	if (!failedOnce && format.size.width && format.size.height) {
 		switch (convert_video_frame(*latest->buffer, format, scratch)) {
-		case FrameResult::Ready: {
-			std::lock_guard<std::mutex> lock(state->mutex);
-			notify = !state->hasFrame || state->width != scratch.width || state->height != scratch.height;
-			state->pixels.swap(scratch.pixels);
-			state->width = scratch.width;
-			state->height = scratch.height;
-			state->hasFrame = true;
-			state->frameDirty = true;
+		case FrameResult::Ready:
+			notify = frames->publish(scratch);
 			break;
-		}
 		case FrameResult::Empty:
 			// Metadata-only or corrupted buffers do not replace a valid frame.
 			break;
@@ -219,5 +212,5 @@ void PipeWireCapture::process()
 	}
 	pw_stream_queue_buffer(stream, latest);
 	if (notify)
-		changed(CaptureStatus::Capturing);
+		changed(PipeWireStatus::Streaming);
 }

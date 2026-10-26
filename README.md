@@ -127,6 +127,9 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
+Window matching, frame conversion, and frame handoff tests run without a desktop
+session. Run just those checks with `ctest --test-dir build -R 'window-rule|video-frame|frame-buffer'`.
+
 Integration tests run a simulated KWin Wayland server and an isolated PipeWire
 daemon with generated video. They exercise matching, settings, reconnection,
 cursor modes, rendering, and focus-driven ordering in real OBS scenes/groups.
@@ -146,6 +149,7 @@ QT_QPA_PLATFORM=wayland WAYLANDCONNECT_LIVE_TEST=1 ./build/waylandconnect-tests 
 - `src/capture.cpp`: capture lifecycle, automatic reconnection, and focus actions.
 - `src/focus-order.cpp`: ordering items inside their existing containers.
 - `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
+- `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.
 - `src/waylandconnect-source.cpp`: OBS properties, saved configuration, and rendering.
 
 Video uses a shared-memory CPU copy path; GPU-only buffers and HDR are unsupported.

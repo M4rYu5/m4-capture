@@ -31,6 +31,7 @@ set(CAPTURE_SOURCES
   src/kwin-connection.cpp src/kwin-connection.hpp
   src/pipewire-capture.cpp src/pipewire-capture.hpp
   src/video-frame.cpp src/video-frame.hpp
+  src/frame-buffer.cpp src/frame-buffer.hpp
   src/window-rule.cpp src/window-rule.hpp
   src/focus-order.cpp
   src/waylandconnect-source.cpp
@@ -66,6 +67,18 @@ option(WAYLANDCONNECT_BUILD_TESTS "Build window matching and capture lifecycle t
 if(WAYLANDCONNECT_BUILD_TESTS)
   enable_testing()
   find_package(Qt6 REQUIRED COMPONENTS Test)
+  add_executable(window-rule-tests tests/window-rule-test.cpp src/window-rule.cpp)
+  target_include_directories(window-rule-tests PRIVATE src)
+  target_compile_features(window-rule-tests PRIVATE cxx_std_17)
+  target_link_libraries(window-rule-tests PRIVATE Qt6::Test)
+  set_target_properties(window-rule-tests PROPERTIES AUTOMOC ON)
+  add_test(NAME window-rule COMMAND $<TARGET_FILE:window-rule-tests>)
+  add_executable(frame-buffer-tests tests/frame-buffer-test.cpp src/frame-buffer.cpp)
+  target_include_directories(frame-buffer-tests PRIVATE src)
+  target_compile_features(frame-buffer-tests PRIVATE cxx_std_17)
+  target_link_libraries(frame-buffer-tests PRIVATE Qt6::Test PkgConfig::PIPEWIRE)
+  set_target_properties(frame-buffer-tests PROPERTIES AUTOMOC ON)
+  add_test(NAME frame-buffer COMMAND $<TARGET_FILE:frame-buffer-tests>)
   add_executable(video-frame-tests tests/video-frame-test.cpp src/video-frame.cpp)
   target_include_directories(video-frame-tests PRIVATE src)
   target_compile_features(video-frame-tests PRIVATE cxx_std_17)

@@ -1,25 +1,32 @@
 #pragma once
 
-#include "capture.hpp"
-#include "video-frame.hpp"
+#include "frame-buffer.hpp"
+
+#include <QString>
 
 #include <pipewire/pipewire.h>
 #include <spa/param/video/raw.h>
 
 #include <functional>
+#include <memory>
+
+enum class PipeWireStatus { Connecting, Paused, Streaming };
 
 class PipeWireCapture
 {
       public:
-	PipeWireCapture(std::shared_ptr<CaptureState> state, std::function<void(QString)> failed,
-			std::function<void(CaptureStatus)> changed);
+	// Callbacks may run on the PipeWire thread; the caller must marshal UI work.
+	PipeWireCapture(std::shared_ptr<FrameBuffer> frames, std::function<void(QString)> failed,
+			std::function<void(PipeWireStatus)> changed);
 	~PipeWireCapture();
+	PipeWireCapture(const PipeWireCapture &) = delete;
+	PipeWireCapture &operator=(const PipeWireCapture &) = delete;
 	bool start(int fd, uint32_t node, const QString &serial);
 
       private:
-	std::shared_ptr<CaptureState> state;
+	std::shared_ptr<FrameBuffer> frames;
 	std::function<void(QString)> failed;
-	std::function<void(CaptureStatus)> changed;
+	std::function<void(PipeWireStatus)> changed;
 	pw_thread_loop *loop = nullptr;
 	pw_context *context = nullptr;
 	pw_core *core = nullptr;

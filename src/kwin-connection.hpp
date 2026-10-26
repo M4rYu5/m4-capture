@@ -3,6 +3,7 @@
 #include "window-rule.hpp"
 
 #include <QObject>
+#include <QSet>
 #include <QSocketNotifier>
 #include <QTimer>
 
@@ -19,13 +20,15 @@ class KWinStream : public QObject
 {
 	Q_OBJECT
       public:
-	KWinStream(zkde_screencast_unstable_v1 *manager, const QString &uuid, bool cursor, QObject *parent);
 	~KWinStream() override;
       signals:
 	void ready(uint32_t node, const QString &serial);
 	void closed(const QString &reason);
 
       private:
+	friend class KWinConnection;
+	KWinStream(zkde_screencast_unstable_v1 *manager, const QString &uuid, bool cursor, QObject *parent);
+	void invalidate(const QString &reason);
 	zkde_screencast_stream_unstable_v1 *stream = nullptr;
 	QString serial;
 };
@@ -47,6 +50,8 @@ class KWinConnection : public QObject
       private:
 	struct Window;
 	std::map<QString, std::unique_ptr<Window>> entries;
+	// Proxies are invalidated before their display, even if wrappers outlive us.
+	QSet<KWinStream *> streams;
 	wl_display *display = nullptr;
 	wl_registry *registry = nullptr;
 	org_kde_plasma_window_management *management = nullptr;
