@@ -125,6 +125,13 @@ static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, o
 	return false;
 }
 
+static void setHelpDescription(obs_property_t *property, const char *key)
+{
+	auto text = QString::fromUtf8(obs_module_text(key)).toHtmlEscaped();
+	auto tooltip = QStringLiteral("<qt><table width=\"360\"><tr><td>%1</td></tr></table></qt>").arg(text).toUtf8();
+	obs_property_set_long_description(property, tooltip.constData());
+}
+
 static obs_properties_t *sourceProperties(void *opaque)
 {
 	auto props = obs_properties_create();
@@ -170,12 +177,12 @@ static obs_properties_t *sourceProperties(void *opaque)
 	obs_properties_add_bool(props, "case_sensitive", obs_module_text("Source.CaseSensitive"));
 	auto disconnect = obs_properties_add_bool(props, "disconnect_on_title_mismatch",
 						  obs_module_text("Source.DisconnectOnTitleMismatch"));
-	obs_property_set_long_description(disconnect, obs_module_text("Source.DisconnectOnTitleMismatch.Help"));
+	setHelpDescription(disconnect, "Source.DisconnectOnTitleMismatch.Help");
 	obs_properties_add_bool(props, "capture_cursor", obs_module_text("Source.Cursor"));
 	obs_properties_add_bool(props, "auto_start", obs_module_text("Source.AutoStart"));
 	obs_properties_add_bool(props, "auto_reconnect", obs_module_text("Source.AutoReconnect"));
 	auto focus = obs_properties_add_bool(props, "raise_on_focus", obs_module_text("Source.RaiseOnFocus"));
-	obs_property_set_long_description(focus, obs_module_text("Source.RaiseOnFocus.Help"));
+	setHelpDescription(focus, "Source.RaiseOnFocus.Help");
 	obs_properties_add_button2(props, "connect", obs_module_text("Source.Connect"), connectClicked, opaque);
 	obs_properties_add_button2(props, "stop", obs_module_text("Source.Stop"), stopClicked, opaque);
 	return props;
