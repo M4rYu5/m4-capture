@@ -15,21 +15,23 @@ KWinStream::KWinStream(zkde_screencast_unstable_v1 *manager, const QString &uuid
 	stream = zkde_screencast_unstable_v1_stream_window(manager, uuid.toUtf8().constData(),
 							   cursor ? ZKDE_SCREENCAST_UNSTABLE_V1_POINTER_EMBEDDED
 								  : ZKDE_SCREENCAST_UNSTABLE_V1_POINTER_HIDDEN);
-	static const zkde_screencast_stream_unstable_v1_listener listener = {
-	    [](void *data, auto *) {
-		    emit static_cast<KWinStream *>(data)->closed(QStringLiteral("The captured window closed."));
-	    },
-	    [](void *data, auto *, uint32_t node) {
-		    auto self = static_cast<KWinStream *>(data);
-		    emit self->ready(node, self->serial);
-	    },
-	    [](void *data, auto *, const char *error) {
-		    emit static_cast<KWinStream *>(data)->closed(QString::fromUtf8(error));
-	    },
-	    [](void *data, auto *, uint32_t high, uint32_t low) {
-		    static_cast<KWinStream *>(data)->serial = QString::number((uint64_t(high) << 32) | low);
-	    },
-	};
+	static const zkde_screencast_stream_unstable_v1_listener listener = [] {
+		zkde_screencast_stream_unstable_v1_listener events{};
+		events.closed = [](void *data, auto *) {
+			emit static_cast<KWinStream *>(data)->closed(QStringLiteral("The captured window closed."));
+		};
+		events.created = [](void *data, auto *, uint32_t node) {
+			auto self = static_cast<KWinStream *>(data);
+			emit self->ready(node, self->serial);
+		};
+		events.failed = [](void *data, auto *, const char *error) {
+			emit static_cast<KWinStream *>(data)->closed(QString::fromUtf8(error));
+		};
+		events.serial = [](void *data, auto *, uint32_t high, uint32_t low) {
+			static_cast<KWinStream *>(data)->serial = QString::number((uint64_t(high) << 32) | low);
+		};
+		return events;
+	}();
 	zkde_screencast_stream_unstable_v1_add_listener(stream, &listener, this);
 }
 
@@ -75,7 +77,12 @@ void KWinConnection::open()
 		return;
 	}
 	registry = wl_display_get_registry(display);
-	static const wl_registry_listener listener{global, globalRemoved};
+	static const wl_registry_listener listener = [] {
+		wl_registry_listener events{};
+		events.global = global;
+		events.global_remove = globalRemoved;
+		return events;
+	}();
 	wl_registry_add_listener(registry, &listener, this);
 	reader = new QSocketNotifier(wl_display_get_fd(display), QSocketNotifier::Read, this);
 	connect(reader, &QSocketNotifier::activated, this, [this] {
@@ -89,17 +96,22 @@ void KWinConnection::open()
 	writer->setEnabled(false);
 	connect(writer, &QSocketNotifier::activated, this, [this] { flush(); });
 	auto sync = wl_display_sync(display);
-	static const wl_callback_listener done{[](void *data, wl_callback *callback, uint32_t) {
-		wl_callback_destroy(callback);
-		auto self = static_cast<KWinConnection *>(data);
-		self->initialized = true;
-		if (!self->available())
-			self->message = QStringLiteral("KWin window management or screencast access is unavailable. "
-						       "KDE Plasma Wayland is required.");
-		else
-			self->message.clear();
-		self->notify();
-	}};
+	static const wl_callback_listener done = [] {
+		wl_callback_listener events{};
+		events.done = [](void *data, wl_callback *callback, uint32_t) {
+			wl_callback_destroy(callback);
+			auto self = static_cast<KWinConnection *>(data);
+			self->initialized = true;
+			if (!self->available())
+				self->message =
+				    QStringLiteral("KWin window management or screencast access is unavailable. "
+						   "KDE Plasma Wayland is required.");
+			else
+				self->message.clear();
+			self->notify();
+		};
+		return events;
+	}();
 	wl_callback_add_listener(sync, &done, this);
 	retry.stop();
 	flush();
@@ -194,16 +206,18 @@ void KWinConnection::global(void *data, wl_registry *registry, uint32_t name, co
 		self->managementName = name;
 		self->management = static_cast<org_kde_plasma_window_management *>(wl_registry_bind(
 		    registry, name, &org_kde_plasma_window_management_interface, std::min(version, 21u)));
-		static const org_kde_plasma_window_management_listener listener{
-		    [](void *, auto *, uint32_t) {},
-		    [](void *, auto *, uint32_t) {},
-		    [](void *, auto *, wl_array *) {},
-		    [](void *, auto *, const char *) {},
-		    [](void *data, auto *, uint32_t, const char *uuid) {
-			    static_cast<KWinConnection *>(data)->addWindow(QString::fromUtf8(uuid));
-		    },
-		    [](void *, auto *) {},
-		};
+		static const org_kde_plasma_window_management_listener listener = [] {
+			org_kde_plasma_window_management_listener events{};
+			events.show_desktop_changed = [](void *, auto *, uint32_t) {};
+			events.window = [](void *, auto *, uint32_t) {};
+			events.stacking_order_changed = [](void *, auto *, wl_array *) {};
+			events.stacking_order_uuid_changed = [](void *, auto *, const char *) {};
+			events.window_with_uuid = [](void *data, auto *, uint32_t, const char *uuid) {
+				static_cast<KWinConnection *>(data)->addWindow(QString::fromUtf8(uuid));
+			};
+			events.stacking_order_changed_2 = [](void *, auto *) {};
+			return events;
+		}();
 		org_kde_plasma_window_management_add_listener(self->management, &listener, self);
 	} else if (!std::strcmp(interface, zkde_screencast_unstable_v1_interface.name)) {
 		self->screencastName = name;

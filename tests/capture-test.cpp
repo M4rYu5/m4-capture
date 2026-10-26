@@ -1,6 +1,5 @@
-#include "capture.hpp"
-#include "kwin-connection.hpp"
 #include "kwin-fixture.hpp"
+#include "obs-capture.hpp"
 #include "video-fixture.hpp"
 
 #include <obs-frontend-api.h>
@@ -8,12 +7,8 @@
 #include <obs-nix-platform.h>
 
 #include <QApplication>
-#include <QEvent>
-#include <QSignalSpy>
 #include <QTest>
 #include <wayland-client.h>
-
-void register_waylandconnect_source();
 
 static QWidget *mainWindow = nullptr;
 static obs_source_t *currentScene = nullptr;
@@ -28,7 +23,6 @@ class CaptureTest : public QObject
 	Q_OBJECT
 	KWinFixture kwin;
 	bool live = qEnvironmentVariableIsSet("WAYLANDCONNECT_LIVE_TEST");
-	QByteArray originalRemote = qgetenv("PIPEWIRE_REMOTE");
 
 	QString status(obs_source_t *source)
 	{
@@ -122,37 +116,9 @@ class CaptureTest : public QObject
 		scenes.clear();
 		if (!live)
 			kwin.clear();
-		qputenv("PIPEWIRE_REMOTE", originalRemote);
 		QTest::qWait(60);
 	}
 	void cleanupTestCase() { shutdown_capture(); }
-
-	void absentWindowWaitsWithoutCaptureRequests()
-	{
-		OBSSourceAutoRelease target = source("Absent target");
-		int requests = kwin.captureRequests;
-		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("waiting"), 3000);
-		QTest::qWait(100);
-		QCOMPARE(kwin.captureRequests, requests);
-		QCOMPARE(renderedPixel(target).alpha(), 0);
-		kwin.add({"arriving", "test.app", "App opened", false});
-		QTRY_COMPARE_WITH_TIMEOUT(kwin.captureRequests, requests + 1, 3000);
-		QCOMPARE(kwin.requestedWindow, QString("arriving"));
-	}
-
-	void stopDisarmsAndConnectRearms()
-	{
-		OBSSourceAutoRelease target = source("Manual stop");
-		QTRY_COMPARE(status(target), QString("waiting"));
-		action(target, "stop");
-		QTRY_COMPARE(status(target), QString("idle"));
-		int requests = kwin.captureRequests;
-		kwin.add({"manual", "test.app", "Open", false});
-		QTest::qWait(100);
-		QCOMPARE(kwin.captureRequests, requests);
-		action(target, "connect");
-		QTRY_COMPARE(kwin.captureRequests, requests + 1);
-	}
 
 	void statusChangesDoNotReloadProperties()
 	{
@@ -277,12 +243,7 @@ class CaptureTest : public QObject
 	void videoReconnectsAndKeepsSizeAndCursorChoice()
 	{
 		TestVideo video;
-		QVERIFY(video.start());
-		QVERIFY(video.startProducer());
-		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
-		kwin.reject = false;
-		kwin.videoNode = video.nodeId();
-		kwin.videoSerial = video.serial();
+		QVERIFY(video.startCapture(kwin));
 		kwin.add({"first", "test.app", "First title", false});
 		OBSSourceAutoRelease target = source("Video target");
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
@@ -331,12 +292,7 @@ class CaptureTest : public QObject
 		QFETCH(bool, enabled);
 		QFETCH(bool, automatic);
 		TestVideo video;
-		QVERIFY(video.start());
-		QVERIFY(video.startProducer());
-		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
-		kwin.reject = false;
-		kwin.videoNode = video.nodeId();
-		kwin.videoSerial = video.serial();
+		QVERIFY(video.startCapture(kwin));
 		kwin.add({"editor", "test.app", "Other", false});
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "app_id", "test.app");
@@ -391,12 +347,7 @@ class CaptureTest : public QObject
 	{
 		QFETCH(bool, automatic);
 		TestVideo video;
-		QVERIFY(video.start());
-		QVERIFY(video.startProducer());
-		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
-		kwin.reject = false;
-		kwin.videoNode = video.nodeId();
-		kwin.videoSerial = video.serial();
+		QVERIFY(video.startCapture(kwin));
 		kwin.add({"editor", "test.app", "Editor", false});
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "app_id", "test.app");
@@ -439,12 +390,7 @@ class CaptureTest : public QObject
 	{
 		QFETCH(QString, preferred);
 		TestVideo video;
-		QVERIFY(video.start());
-		QVERIFY(video.startProducer());
-		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
-		kwin.reject = false;
-		kwin.videoNode = video.nodeId();
-		kwin.videoSerial = video.serial();
+		QVERIFY(video.startCapture(kwin));
 		kwin.add({"first", "test.app", "First", false});
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "app_id", "test.app");
@@ -470,12 +416,7 @@ class CaptureTest : public QObject
 	void propertyEditsOnlyRestartCaptureWhenNeeded()
 	{
 		TestVideo video;
-		QVERIFY(video.start());
-		QVERIFY(video.startProducer());
-		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
-		kwin.reject = false;
-		kwin.videoNode = video.nodeId();
-		kwin.videoSerial = video.serial();
+		QVERIFY(video.startCapture(kwin));
 		kwin.add({"editor", "test.app", "Editor", false});
 		OBSSourceAutoRelease target = source("Editing properties");
 		int updates = 0;
@@ -523,144 +464,6 @@ class CaptureTest : public QObject
 		QCOMPARE(obs_source_get_width(target), uint32_t(160));
 		QCOMPARE(obs_source_get_height(target), uint32_t(90));
 		QCOMPARE(updates, 0);
-	}
-
-	void automaticReconnectCanBeDisabled()
-	{
-		kwin.add({"no-retry", "test.app", "App", false});
-		OBSDataAutoRelease settings = obs_data_create();
-		obs_data_set_string(settings, "app_id", "test.app");
-		obs_data_set_bool(settings, "auto_reconnect", false);
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "No auto retry", settings, nullptr);
-		int requests = kwin.captureRequests;
-		QTRY_COMPARE_WITH_TIMEOUT(kwin.captureRequests, requests + 1, 3000);
-		QTRY_COMPARE(status(target), QString("failed"));
-		kwin.remove("no-retry");
-		kwin.add({"new-no-retry", "test.app", "Returned", false});
-		QTest::qWait(2100);
-		QCOMPARE(kwin.captureRequests, requests + 1);
-		action(target, "connect");
-		QTRY_COMPARE(kwin.captureRequests, requests + 2);
-	}
-
-	void backendDisconnectRespectsReconnectSetting_data()
-	{
-		QTest::addColumn<bool>("automatic");
-		QTest::newRow("automatic") << true;
-		QTest::newRow("manual") << false;
-	}
-
-	void backendDisconnectRespectsReconnectSetting()
-	{
-		QFETCH(bool, automatic);
-		TestVideo video;
-		QVERIFY(video.start());
-		QVERIFY(video.startProducer());
-		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
-		kwin.reject = false;
-		kwin.videoNode = video.nodeId();
-		kwin.videoSerial = video.serial();
-		kwin.add({"backend", "test.app", "Backend reconnect", false});
-		OBSDataAutoRelease settings = obs_data_create();
-		obs_data_set_string(settings, "app_id", "test.app");
-		obs_data_set_bool(settings, "auto_reconnect", automatic);
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "Backend reconnect", settings, nullptr);
-		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
-		int requests = kwin.captureRequests;
-		kwin.disconnectClients();
-		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("failed"), 1000);
-		QVERIFY(capture_windows().isEmpty());
-		QCOMPARE(renderedPixel(target).alpha(), 0);
-		QCOMPARE(obs_source_get_width(target), uint32_t(160));
-		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
-		if (!automatic) {
-			QCOMPARE(status(target), QString("failed"));
-			QCOMPARE(kwin.captureRequests, requests);
-			action(target, "connect");
-		}
-		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
-		QCOMPARE(kwin.captureRequests, requests + 1);
-		QCOMPARE(renderedPixel(target).alpha(), 255);
-	}
-
-	void releasedSourceDisconnectsBeforeControllerDeletion()
-	{
-		kwin.deferCapture = true;
-		kwin.add({"closing", "test.app", "Closing", false});
-		KWinConnection backend(nullptr);
-		QTRY_VERIFY(backend.available());
-		QTRY_COMPARE(backend.windows().size(), 1);
-		auto state = std::make_shared<CaptureState>();
-		state->config.rule.appId = "test.app";
-		auto controller = std::make_unique<KWinCapture>(state, &backend, nullptr);
-		state->controller = controller.get();
-		controller->action(CaptureAction::Configure);
-		QTRY_COMPARE(kwin.requestedWindow, QString("closing"));
-		QSocketNotifier *reader = nullptr;
-		for (auto notifier : backend.findChildren<QSocketNotifier *>())
-			if (notifier->type() == QSocketNotifier::Read)
-				reader = notifier;
-		QVERIFY(reader);
-		controller.release();
-		release_capture(state);
-		kwin.disconnectClients();
-		// Force the socket event ahead of the queued controller deletion to reproduce the race.
-		QEvent socketEvent(QEvent::SockAct);
-		QCoreApplication::sendEvent(reader, &socketEvent);
-		QVERIFY(!backend.available());
-		QCoreApplication::sendPostedEvents();
-		QVERIFY(!state->controller);
-	}
-
-	void streamOutlivesBackend_data()
-	{
-		QTest::addColumn<bool>("disconnectFirst");
-		QTest::newRow("connection-destroyed") << false;
-		QTest::newRow("connection-disconnected") << true;
-	}
-
-	void streamOutlivesBackend()
-	{
-		QFETCH(bool, disconnectFirst);
-		kwin.deferCapture = true;
-		kwin.add({"retained", "test.app", "Retained stream", false});
-		auto backend = std::make_unique<KWinConnection>(nullptr);
-		QTRY_VERIFY(backend->available());
-		// No controller or changed() observer participates in stream teardown.
-		std::unique_ptr<KWinStream> stream(backend->capture("retained", true, nullptr));
-		QVERIFY(stream);
-		QSignalSpy closed(stream.get(), &KWinStream::closed);
-		backend->flush();
-		QTRY_COMPARE(kwin.requestedWindow, QString("retained"));
-		if (disconnectFirst) {
-			kwin.disconnectClients();
-			QTRY_VERIFY(!backend->available());
-			QCOMPARE(closed.count(), 1);
-		}
-		backend.reset();
-		QCOMPARE(closed.count(), 1);
-		stream.reset();
-	}
-
-	void controllerOutlivesBackend()
-	{
-		kwin.deferCapture = true;
-		kwin.add({"controller", "test.app", "Controller lifetime", false});
-		auto backend = std::make_unique<KWinConnection>(nullptr);
-		QTRY_VERIFY(backend->available());
-		QTRY_COMPARE(backend->windows().size(), 1);
-		auto state = std::make_shared<CaptureState>();
-		state->config.rule.appId = "test.app";
-		auto controller = std::make_unique<KWinCapture>(state, backend.get(), nullptr);
-		controller->action(CaptureAction::Configure);
-		QTRY_COMPARE(kwin.requestedWindow, QString("controller"));
-		backend.reset();
-		QTRY_COMPARE(state->status, CaptureStatus::Failed);
-		controller->action(CaptureAction::Connect);
-		QCOMPARE(state->status, CaptureStatus::Failed);
-		controller.reset();
 	}
 
 	void liveKWinCapture()

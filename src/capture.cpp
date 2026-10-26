@@ -2,66 +2,44 @@
 #include "kwin-connection.hpp"
 #include "pipewire-capture.hpp"
 
-#include <obs-frontend-api.h>
-#include <obs-module.h>
-
-#include <QCoreApplication>
-#include <algorithm>
+#include <QThread>
 
 namespace
 {
-QObject *captureContext = nullptr;
-KWinConnection *connection = nullptr;
-std::mutex windowsMutex;
-QList<WindowInfo> windowsSnapshot;
-
 bool requiresTargetSelection(const CaptureConfig &a, const CaptureConfig &b)
 {
 	return a.rule.appId != b.rule.appId || a.rule.title != b.rule.title || a.rule.mode != b.rule.mode ||
 	       a.rule.caseSensitive != b.rule.caseSensitive || a.preferredWindow != b.preferredWindow;
 }
-
-void ensureConnection()
-{
-	if (connection)
-		return;
-	connection = new KWinConnection(captureContext);
-	QObject::connect(connection, &KWinConnection::changed, captureContext, [] {
-		std::lock_guard<std::mutex> lock(windowsMutex);
-		windowsSnapshot = connection->windows();
-	});
-}
 } // namespace
 
-CaptureConfig read_capture_config(obs_data_t *settings)
+CaptureState::CaptureState(uint32_t width, uint32_t height, CaptureCallbacks callbacks)
+    : frames(std::make_shared<FrameBuffer>(width, height)), callbacks(std::move(callbacks))
 {
-	CaptureConfig config;
-	config.rule.appId = QString::fromUtf8(obs_data_get_string(settings, "app_id"));
-	config.rule.title = QString::fromUtf8(obs_data_get_string(settings, "title_filter"));
-	config.rule.mode =
-	    static_cast<TitleMatch>(std::clamp<long long>(obs_data_get_int(settings, "title_match"), 0, 3));
-	config.rule.caseSensitive = obs_data_get_bool(settings, "case_sensitive");
-	config.rule.disconnectOnTitleMismatch = obs_data_get_bool(settings, "disconnect_on_title_mismatch");
-	config.preferredWindow = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
-	config.cursor = obs_data_get_bool(settings, "capture_cursor");
-	config.autoStart = obs_data_get_bool(settings, "auto_start");
-	config.autoReconnect = obs_data_get_bool(settings, "auto_reconnect");
-	config.raiseOnFocus = obs_data_get_bool(settings, "raise_on_focus");
+}
+
+void CaptureState::configure(const CaptureConfig &next)
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	config = next;
+}
+
+CaptureConfig CaptureState::configuration() const
+{
+	std::lock_guard<std::mutex> lock(mutex);
 	return config;
 }
 
-void write_capture_config(obs_data_t *settings, const CaptureConfig &config)
+CaptureDiagnostics CaptureState::diagnostics() const
 {
-	obs_data_set_string(settings, "app_id", config.rule.appId.toUtf8().constData());
-	obs_data_set_string(settings, "title_filter", config.rule.title.toUtf8().constData());
-	obs_data_set_int(settings, "title_match", int(config.rule.mode));
-	obs_data_set_bool(settings, "case_sensitive", config.rule.caseSensitive);
-	obs_data_set_bool(settings, "disconnect_on_title_mismatch", config.rule.disconnectOnTitleMismatch);
-	obs_data_set_string(settings, "selected_window", config.preferredWindow.toUtf8().constData());
-	obs_data_set_bool(settings, "capture_cursor", config.cursor);
-	obs_data_set_bool(settings, "auto_start", config.autoStart);
-	obs_data_set_bool(settings, "auto_reconnect", config.autoReconnect);
-	obs_data_set_bool(settings, "raise_on_focus", config.raiseOnFocus);
+	std::lock_guard<std::mutex> lock(mutex);
+	return diagnostic;
+}
+
+void CaptureState::setStatus(CaptureStatus next, const QString &detail)
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	diagnostic = {next, detail};
 }
 
 const char *capture_status_name(CaptureStatus status)
@@ -73,6 +51,8 @@ const char *capture_status_name(CaptureStatus status)
 		return "connecting";
 	case CaptureStatus::Capturing:
 		return "capturing";
+	case CaptureStatus::Paused:
+		return "paused";
 	case CaptureStatus::Failed:
 		return "failed";
 	default:
@@ -80,58 +60,12 @@ const char *capture_status_name(CaptureStatus status)
 	}
 }
 
-void initialize_capture()
-{
-	if (!QCoreApplication::instance())
-		return;
-	captureContext = new QObject;
-	captureContext->moveToThread(QCoreApplication::instance()->thread());
-	QMetaObject::invokeMethod(captureContext, [] { ensureConnection(); }, Qt::QueuedConnection);
-}
-
-void shutdown_capture()
-{
-	delete captureContext;
-	captureContext = nullptr;
-	connection = nullptr;
-	std::lock_guard<std::mutex> lock(windowsMutex);
-	windowsSnapshot.clear();
-}
-
-QList<WindowInfo> capture_windows()
-{
-	std::lock_guard<std::mutex> lock(windowsMutex);
-	return windowsSnapshot;
-}
-
-void queue_capture_action(const std::shared_ptr<CaptureState> &state, CaptureAction action)
-{
-	if (!captureContext || !state->alive)
-		return;
-	QMetaObject::invokeMethod(
-	    captureContext,
-	    [state, action] {
-		    if (!state->alive)
-			    return;
-		    ensureConnection();
-		    if (!state->controller)
-			    state->controller = new KWinCapture(state, connection, captureContext);
-		    state->controller->action(action);
-	    },
-	    Qt::QueuedConnection);
-}
-
-void release_capture(const std::shared_ptr<CaptureState> &state)
-{
-	state->alive = false;
-	if (captureContext)
-		QMetaObject::invokeMethod(
-		    captureContext, [state] { delete state->controller.data(); }, Qt::QueuedConnection);
-}
-
 KWinCapture::KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *backend, QObject *parent)
     : QObject(parent), state(std::move(state)), backend(backend)
 {
+	Q_ASSERT(QThread::currentThread() == thread());
+	Q_ASSERT(!this->state->controller);
+	this->state->controller = this;
 	retry.setSingleShot(true);
 	retry.setInterval(2000);
 	deadline.setSingleShot(true);
@@ -146,13 +80,30 @@ KWinCapture::~KWinCapture() { stopStream(); }
 
 void KWinCapture::action(CaptureAction action)
 {
-	CaptureConfig next;
-	{
-		std::lock_guard<std::mutex> lock(state->mutex);
-		if (action == CaptureAction::Connect && state->status == CaptureStatus::Connecting)
-			return;
-		next = state->config;
+	Q_ASSERT(QThread::currentThread() == thread());
+	if (action == CaptureAction::Connect && state->diagnostics().status == CaptureStatus::Connecting)
+		return;
+	applyConfiguration();
+	switch (action) {
+	case CaptureAction::Stop:
+		stopWaiting();
+		return;
+	case CaptureAction::Connect:
+		connectionEnabled = true;
+		retry.stop();
+		stopStream();
+		currentWindowUuid.clear();
+		wasFocused = false;
+		break;
+	case CaptureAction::Configure:
+		break;
 	}
+	reconcile();
+}
+
+void KWinCapture::applyConfiguration()
+{
+	auto next = state->configuration();
 	bool selectTarget = !configured || requiresTargetSelection(next, config);
 	bool restart = !configured || next.cursor != config.cursor;
 	if (selectTarget) {
@@ -168,29 +119,25 @@ void KWinCapture::action(CaptureAction action)
 	if (!config.raiseOnFocus && next.raiseOnFocus)
 		wasFocused = false;
 	config = next;
-	if (action == CaptureAction::Stop) {
-		connectionEnabled = false;
-		retry.stop();
-		stopStream();
-		status(CaptureStatus::Idle);
-		persist();
-		return;
-	}
-	if (action == CaptureAction::Connect) {
-		connectionEnabled = true;
-		restart = true;
-	}
 	if (selectTarget || restart)
 		retry.stop();
 	if (restart) {
 		stopStream();
-		if (selectTarget || action == CaptureAction::Connect)
+		if (selectTarget)
 			currentWindowUuid.clear();
 		wasFocused = false;
 		if (!connectionEnabled)
 			status(CaptureStatus::Idle);
 	}
-	reconcile();
+}
+
+void KWinCapture::stopWaiting()
+{
+	connectionEnabled = false;
+	retry.stop();
+	stopStream();
+	status(CaptureStatus::Idle);
+	persist();
 }
 
 void KWinCapture::stopStream()
@@ -204,30 +151,18 @@ void KWinCapture::stopStream()
 	state->frames->clear();
 }
 
-void KWinCapture::status(CaptureStatus next, const QString &detail)
-{
-	std::lock_guard<std::mutex> lock(state->mutex);
-	state->status = next;
-	state->detail = detail.toStdString();
-}
+void KWinCapture::status(CaptureStatus next, const QString &detail) { state->setStatus(next, detail); }
 
 void KWinCapture::focused(const WindowInfo &window)
 {
-	if (window.active && !wasFocused && config.raiseOnFocus) {
-		auto source = OBSGetStrongRef(state->source);
-		if (source && obs_frontend_get_main_window()) {
-			OBSSourceAutoRelease sceneSource = obs_frontend_get_current_scene();
-			auto scene = obs_scene_from_source(sceneSource);
-			if (scene && raise_source_items(scene, source))
-				obs_frontend_save();
-		}
-	}
+	if (window.active && !wasFocused && config.raiseOnFocus && state->callbacks.focused)
+		state->callbacks.focused();
 	wasFocused = window.active;
 }
 
 void KWinCapture::reconcile()
 {
-	if (!state->alive) {
+	if (!state->isAlive()) {
 		// Source deletion is queued; stop producing frames while awaiting controller deletion.
 		stopStream();
 		return;
@@ -254,13 +189,11 @@ void KWinCapture::reconcile()
 	bool ambiguous;
 	auto match = select_window(windows, config.rule, currentWindowUuid, config.preferredWindow, &ambiguous);
 	if (stream && match != currentWindowUuid) {
-		stopStream();
 		if (!config.autoReconnect) {
-			connectionEnabled = false;
-			status(CaptureStatus::Idle);
-			persist();
+			stopWaiting();
 			return;
 		}
+		stopStream();
 	}
 	if (match.isEmpty()) {
 		currentWindowUuid.clear();
@@ -304,7 +237,7 @@ void KWinCapture::startStream()
 
 void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &serial)
 {
-	if (generation != attempt || !state->alive)
+	if (generation != attempt || !state->isAlive())
 		return;
 	pipewire = std::make_unique<PipeWireCapture>(
 	    state->frames,
@@ -325,20 +258,20 @@ void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &se
 
 void KWinCapture::streamFailed(uint64_t attempt, const QString &error)
 {
-	if (generation == attempt && state->alive)
+	if (generation == attempt && state->isAlive())
 		failed(error);
 }
 
 void KWinCapture::streamStatusChanged(uint64_t attempt, PipeWireStatus next)
 {
-	if (generation != attempt || !state->alive)
+	if (generation != attempt || !state->isAlive())
 		return;
 	switch (next) {
 	case PipeWireStatus::Connecting:
 		status(CaptureStatus::Connecting);
 		break;
 	case PipeWireStatus::Paused:
-		status(CaptureStatus::Idle);
+		status(CaptureStatus::Paused);
 		break;
 	case PipeWireStatus::Streaming:
 		status(CaptureStatus::Capturing);
@@ -352,7 +285,8 @@ void KWinCapture::failed(const QString &error)
 {
 	stopStream();
 	status(CaptureStatus::Failed, error);
-	blog(LOG_WARNING, "[KCow] %s", error.toUtf8().constData());
+	if (state->callbacks.error)
+		state->callbacks.error(error);
 	persist();
 	if (config.autoReconnect && connectionEnabled)
 		retry.start();
@@ -362,17 +296,6 @@ void KWinCapture::failed(const QString &error)
 
 void KWinCapture::persist()
 {
-	auto source = OBSGetStrongRef(state->source);
-	if (!source || obs_source_removed(source))
-		return;
-	OBSDataAutoRelease settings = obs_source_get_settings(source);
-	{
-		std::lock_guard<std::mutex> lock(state->mutex);
-		write_capture_config(settings, state->config);
-	}
-	auto size = state->frames->size();
-	obs_data_set_int(settings, "width", size.width);
-	obs_data_set_int(settings, "height", size.height);
-	if (obs_frontend_get_main_window())
-		obs_frontend_save();
+	if (state->callbacks.save)
+		state->callbacks.save(*state);
 }

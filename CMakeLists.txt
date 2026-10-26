@@ -28,23 +28,35 @@ endforeach()
 
 set(CAPTURE_SOURCES
   src/capture.cpp src/capture.hpp
+  src/capture-runtime.cpp
   src/kwin-connection.cpp src/kwin-connection.hpp
   src/pipewire-capture.cpp src/pipewire-capture.hpp
   src/video-frame.cpp src/video-frame.hpp
   src/frame-buffer.cpp src/frame-buffer.hpp
   src/window-rule.cpp src/window-rule.hpp
-  src/focus-order.cpp
-  src/waylandconnect-source.cpp
   ${PROTOCOL_SOURCES}
 )
 
-add_library(waylandconnect MODULE
-  src/plugin.cpp
-  ${CAPTURE_SOURCES}
+add_library(capture-core STATIC ${CAPTURE_SOURCES})
+target_include_directories(capture-core PUBLIC src PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(capture-core PUBLIC Qt6::Core PkgConfig::PIPEWIRE PkgConfig::WAYLAND)
+target_compile_features(capture-core PUBLIC cxx_std_17)
+target_compile_options(capture-core PRIVATE -Wall -Wextra -Wpedantic)
+set_target_properties(capture-core PROPERTIES
+  AUTOMOC ON
+  POSITION_INDEPENDENT_CODE ON
+  C_VISIBILITY_PRESET hidden
+  CXX_VISIBILITY_PRESET hidden
 )
-target_include_directories(waylandconnect PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+set(OBS_SOURCES
+  src/obs-capture.cpp src/obs-capture.hpp
+  src/focus-order.cpp
+  src/waylandconnect-source.cpp
+)
+add_library(waylandconnect MODULE src/plugin.cpp ${OBS_SOURCES})
 target_link_libraries(waylandconnect PRIVATE
-  OBS::libobs OBS::obs-frontend-api Qt6::Widgets PkgConfig::PIPEWIRE PkgConfig::WAYLAND
+  capture-core OBS::libobs OBS::obs-frontend-api Qt6::Widgets
 )
 target_compile_features(waylandconnect PRIVATE cxx_std_17)
 target_compile_options(waylandconnect PRIVATE -Wall -Wextra -Wpedantic)
@@ -90,21 +102,32 @@ if(WAYLANDCONNECT_BUILD_TESTS)
   foreach(PROTOCOL plasma-window-management zkde-screencast-unstable-v1)
     set(HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/${PROTOCOL}-server-protocol.h")
     add_custom_command(OUTPUT "${HEADER}"
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
       COMMAND ${WAYLAND_SCANNER} server-header "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${PROTOCOL}.xml" "${HEADER}"
       DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${PROTOCOL}.xml" VERBATIM)
     list(APPEND TEST_PROTOCOL_HEADERS "${HEADER}")
   endforeach()
+  add_executable(capture-controller-tests
+    tests/capture-controller-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
+    ${TEST_PROTOCOL_HEADERS}
+  )
+  target_include_directories(capture-controller-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(capture-controller-tests PRIVATE capture-core Qt6::Test PkgConfig::WAYLAND_SERVER)
+  target_compile_options(capture-controller-tests PRIVATE -Wall -Wextra -Wpedantic)
+  set_target_properties(capture-controller-tests PROPERTIES AUTOMOC ON)
+  add_test(NAME capture-controller COMMAND $<TARGET_FILE:capture-controller-tests>)
+
   add_executable(waylandconnect-tests
     tests/capture-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
-    ${CAPTURE_SOURCES}
+    ${OBS_SOURCES}
     ${TEST_PROTOCOL_HEADERS}
   )
   target_include_directories(waylandconnect-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_compile_features(waylandconnect-tests PRIVATE cxx_std_17)
   target_link_libraries(waylandconnect-tests PRIVATE
-    OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::PIPEWIRE PkgConfig::WAYLAND PkgConfig::WAYLAND_SERVER
+    capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::WAYLAND_SERVER
   )
   set_target_properties(waylandconnect-tests PROPERTIES AUTOMOC ON)
-  add_test(NAME capture-lifecycle COMMAND $<TARGET_FILE:waylandconnect-tests>)
-  set_tests_properties(capture-lifecycle PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  add_test(NAME obs-integration COMMAND $<TARGET_FILE:waylandconnect-tests>)
+  set_tests_properties(obs-integration PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

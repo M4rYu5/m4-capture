@@ -6,9 +6,9 @@
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
-#include <obs.hpp>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -18,7 +18,10 @@ class KWinStream;
 class PipeWireCapture;
 enum class PipeWireStatus;
 
-enum class CaptureStatus { Idle, Waiting, Connecting, Capturing, Failed };
+// Idle: stopped or unconfigured; Waiting: armed with no unique target; Connecting:
+// awaiting frames; Capturing: frames available; Paused: live stream without frames;
+// Failed: unavailable backend or failed attempt (which may have a retry pending).
+enum class CaptureStatus { Idle, Waiting, Connecting, Capturing, Paused, Failed };
 enum class CaptureAction { Configure, Connect, Stop };
 
 struct CaptureConfig {
@@ -30,17 +33,42 @@ struct CaptureConfig {
 	bool raiseOnFocus = false;
 };
 
-struct CaptureState {
-	// Protects settings and diagnostics; frames have their own synchronization.
-	std::mutex mutex;
-	CaptureConfig config;
-	std::shared_ptr<FrameBuffer> frames = std::make_shared<FrameBuffer>();
+struct CaptureDiagnostics {
 	CaptureStatus status = CaptureStatus::Idle;
-	std::string detail;
+	QString detail;
+};
+
+class CaptureState;
+struct CaptureCallbacks {
+	// Invoked on the controller's Qt thread. Empty callbacks are supported.
+	std::function<void(const CaptureState &)> save;
+	std::function<void()> focused;
+	std::function<void(const QString &)> error;
+};
+
+// Configuration and diagnostic accessors are safe to call from any thread.
+class CaptureState
+{
+      public:
+	explicit CaptureState(uint32_t width = 1280, uint32_t height = 720, CaptureCallbacks callbacks = {});
+	void configure(const CaptureConfig &config);
+	CaptureConfig configuration() const;
+	CaptureDiagnostics diagnostics() const;
+	bool isAlive() const { return alive.load(); }
+	const std::shared_ptr<FrameBuffer> frames;
+
+      private:
+	friend class KWinCapture;
+	friend void queue_capture_action(const std::shared_ptr<CaptureState> &, CaptureAction);
+	friend void release_capture(const std::shared_ptr<CaptureState> &);
+	mutable std::mutex mutex;
+	CaptureConfig config;
+	CaptureDiagnostics diagnostic;
 	std::atomic<bool> alive{true};
-	OBSWeakSource source;
-	// Only touched on the Qt UI thread.
+	const CaptureCallbacks callbacks;
+	// Only accessed by the controller and runtime on the Qt UI thread.
 	QPointer<KWinCapture> controller;
+	void setStatus(CaptureStatus status, const QString &detail);
 };
 
 void initialize_capture();
@@ -49,10 +77,8 @@ void queue_capture_action(const std::shared_ptr<CaptureState> &state, CaptureAct
 void release_capture(const std::shared_ptr<CaptureState> &state);
 QList<WindowInfo> capture_windows();
 const char *capture_status_name(CaptureStatus status);
-bool raise_source_items(obs_scene_t *scene, obs_source_t *source);
-CaptureConfig read_capture_config(obs_data_t *settings);
-void write_capture_config(obs_data_t *settings, const CaptureConfig &config);
 
+// Runs on the Qt UI thread; PipeWire callbacks are queued onto this thread.
 class KWinCapture : public QObject
 {
 	Q_OBJECT
@@ -64,6 +90,7 @@ class KWinCapture : public QObject
       private:
 	std::shared_ptr<CaptureState> state;
 	QPointer<KWinConnection> backend;
+	// Last applied configuration, compared with the latest shared settings on each action.
 	CaptureConfig config;
 	std::unique_ptr<KWinStream> stream;
 	std::unique_ptr<PipeWireCapture> pipewire;
@@ -75,8 +102,11 @@ class KWinCapture : public QObject
 	uint64_t generation = 0;
 	// Startup settings arm capture only once; subsequent edits preserve manual stops.
 	bool configured = false;
+	// User intent is separate from stream status: waiting/failed/paused may stay armed.
 	bool connectionEnabled = false;
 	bool wasFocused = false;
+	void applyConfiguration();
+	void stopWaiting();
 	void reconcile();
 	void startStream();
 	void streamReady(uint64_t attempt, uint32_t node, const QString &serial);

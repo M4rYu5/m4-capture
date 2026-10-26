@@ -1,5 +1,7 @@
 #pragma once
 
+#include "kwin-fixture.hpp"
+
 #include <QProcess>
 #include <QTemporaryDir>
 
@@ -17,6 +19,9 @@ class TestVideo
 	~TestVideo();
 	bool start();
 	bool startProducer();
+	// Starts video and configures the simulated compositor to expose it.
+	bool startCapture(KWinFixture &kwin);
+	bool setProducerActive(bool active);
 	void stopProducer();
 	int openRemote() const;
 	uint32_t nodeId() const { return producerNode.load(); }
@@ -26,6 +31,9 @@ class TestVideo
       private:
 	QTemporaryDir directory;
 	QProcess daemon;
+	const QByteArray originalRemote = qgetenv("PIPEWIRE_REMOTE");
+	const bool hadRemote = qEnvironmentVariableIsSet("PIPEWIRE_REMOTE");
+	bool remoteChanged = false;
 	pw_thread_loop *loop = nullptr;
 	pw_context *context = nullptr;
 	pw_core *core = nullptr;

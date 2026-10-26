@@ -127,13 +127,18 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-Window matching, frame conversion, and frame handoff tests run without a desktop
-session. Run just those checks with `ctest --test-dir build -R 'window-rule|video-frame|frame-buffer'`.
+Window matching, frame conversion, frame handoff, and capture-controller tests
+run without a desktop session. The controller tests use a simulated KWin Wayland
+server and an isolated PipeWire daemon with generated video; they do not link OBS
+or initialize graphics. Run these checks with:
 
-Integration tests run a simulated KWin Wayland server and an isolated PipeWire
-daemon with generated video. They exercise matching, settings, reconnection,
-cursor modes, rendering, and focus-driven ordering in real OBS scenes/groups.
-They use the running Wayland session only to initialize libobs graphics.
+```sh
+env -u WAYLAND_DISPLAY -u DISPLAY ctest --test-dir build -R 'window-rule|video-frame|frame-buffer|capture-controller' --output-on-failure
+```
+
+The `obs-integration` tests exercise settings, cursor modes, rendering, and
+focus-driven ordering in real OBS scenes/groups. They use simulated capture
+servers and the running Wayland session to initialize libobs graphics.
 
 An opt-in live test captures only its own temporary window, closes it, and opens
 a replacement to check real KWin reconnection:
@@ -146,11 +151,34 @@ QT_QPA_PLATFORM=wayland WAYLANDCONNECT_LIVE_TEST=1 ./build/waylandconnect-tests 
 
 - `src/kwin-connection.cpp`: window discovery, focus events, and KWin streams.
 - `src/window-rule.cpp`: application/title matching and stable selection.
-- `src/capture.cpp`: capture lifecycle, automatic reconnection, and focus actions.
+- `src/capture.cpp`: capture lifecycle and automatic reconnection, without OBS dependencies.
+- `src/capture-runtime.cpp`: shared KWin connection, window snapshots, and queued controller ownership.
+- `src/obs-capture.cpp`: OBS settings, persistence, logging, and focus-action callbacks.
 - `src/focus-order.cpp`: ordering items inside their existing containers.
 - `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
 - `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.
 - `src/waylandconnect-source.cpp`: OBS properties, saved configuration, and rendering.
+
+Capture configuration and diagnostics are accessed through synchronized snapshots.
+The frame buffer has its own synchronization; controller ownership and callbacks
+stay on the Qt UI thread. Callbacks hold weak OBS references, so they do not keep
+removed sources alive.
+
+The controller keeps user intent (`connectionEnabled`) separate from stream status:
+
+| Event | Transition |
+| --- | --- |
+| Startup with automatic start, or Connect | Wait for a unique target, then connect. |
+| First frame | Connecting → Capturing. |
+| Stream pauses | Capturing → Paused; clear video and retain the selected window. |
+| Frames resume | Paused → Capturing without choosing another target. |
+| Target disappears, or an enforced title filter fails | Wait/reconnect when enabled; otherwise stop. |
+| Stream failure | Failed; retry after a delay when reconnection is enabled. |
+| Stop | Any status → Idle; disarm waiting and retries. |
+
+Configuration edits preserve a manual stop. Cursor changes restart the stream
+while retaining the current window; target-rule edits re-evaluate selection.
+Old stream callbacks are ignored using an attempt generation incremented before teardown.
 
 Video uses a shared-memory CPU copy path; GPU-only buffers and HDR are unsupported.
 High-resolution/frame-rate performance has not been profiled.

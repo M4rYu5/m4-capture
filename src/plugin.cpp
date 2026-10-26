@@ -1,11 +1,9 @@
-#include "capture.hpp"
+#include "obs-capture.hpp"
 
 #include <obs-module.h>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("waylandconnect", "en-US")
-
-void register_waylandconnect_source();
 
 MODULE_EXPORT const char *obs_module_name() { return "KCow"; }
 

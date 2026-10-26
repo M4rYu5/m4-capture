@@ -15,6 +15,12 @@ QString TestVideo::socketPath() const { return directory.path() + "/pipewire-wc-
 
 TestVideo::~TestVideo()
 {
+	if (remoteChanged) {
+		if (hadRemote)
+			qputenv("PIPEWIRE_REMOTE", originalRemote);
+		else
+			qunsetenv("PIPEWIRE_REMOTE");
+	}
 	stopProducer();
 	if (loop)
 		pw_thread_loop_stop(loop);
@@ -110,6 +116,26 @@ int TestVideo::openRemote() const
 		return -1;
 	}
 	return fd;
+}
+
+bool TestVideo::startCapture(KWinFixture &kwin)
+{
+	if (!start() || !startProducer())
+		return false;
+	qputenv("PIPEWIRE_REMOTE", socketPath().toUtf8());
+	remoteChanged = true;
+	kwin.reject = false;
+	kwin.videoNode = nodeId();
+	kwin.videoSerial = serial();
+	return true;
+}
+
+bool TestVideo::setProducerActive(bool active)
+{
+	pw_thread_loop_lock(loop);
+	int result = pw_stream_set_active(producer, active);
+	pw_thread_loop_unlock(loop);
+	return result == 0;
 }
 
 bool TestVideo::startProducer()

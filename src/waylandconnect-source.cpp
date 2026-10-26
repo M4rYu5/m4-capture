@@ -1,9 +1,9 @@
-#include "capture.hpp"
-#include <algorithm>
+#include "obs-capture.hpp"
 #include <obs-module.h>
 
 struct WaylandSource {
-	std::shared_ptr<CaptureState> state = std::make_shared<CaptureState>();
+	std::shared_ptr<CaptureState> state;
+	OBSWeakSource source;
 	VideoFrame uploadFrame;
 	gs_texture_t *texture = nullptr;
 	uint32_t textureWidth = 0, textureHeight = 0;
@@ -22,28 +22,23 @@ static void requestStop(void *data, calldata_t *)
 static void getStatus(void *data, calldata_t *result)
 {
 	auto state = static_cast<WaylandSource *>(data)->state;
-	std::lock_guard<std::mutex> lock(state->mutex);
-	calldata_set_string(result, "status", capture_status_name(state->status));
-	calldata_set_bool(result, "busy", state->status == CaptureStatus::Connecting);
+	auto diagnostic = state->diagnostics();
+	calldata_set_string(result, "status", capture_status_name(diagnostic.status));
+	calldata_set_bool(result, "busy", diagnostic.status == CaptureStatus::Connecting);
 }
 
 static void sourceUpdate(void *opaque, obs_data_t *settings)
 {
 	auto state = static_cast<WaylandSource *>(opaque)->state;
-	{
-		std::lock_guard<std::mutex> lock(state->mutex);
-		state->config = read_capture_config(settings);
-	}
+	state->configure(read_capture_config(settings));
 	queue_capture_action(state, CaptureAction::Configure);
 }
 
 static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
 {
 	auto data = new WaylandSource;
-	data->state->source = OBSGetWeakRef(source);
-	data->state->frames =
-	    std::make_shared<FrameBuffer>(std::clamp<long long>(obs_data_get_int(settings, "width"), 1, 16384),
-					  std::clamp<long long>(obs_data_get_int(settings, "height"), 1, 16384));
+	data->source = OBSGetWeakRef(source);
+	data->state = create_obs_capture_state(source, settings);
 	sourceUpdate(data, settings);
 	auto handler = obs_source_get_proc_handler(source);
 	proc_handler_add(handler, "void connect()", requestConnect, data);
@@ -64,24 +59,12 @@ static void sourceDestroy(void *opaque)
 	delete data;
 }
 
-static void sourceDefaults(obs_data_t *settings)
-{
-	obs_data_set_default_int(settings, "width", 1280);
-	obs_data_set_default_int(settings, "height", 720);
-	obs_data_set_default_bool(settings, "capture_cursor", true);
-	obs_data_set_default_bool(settings, "auto_start", true);
-	obs_data_set_default_bool(settings, "auto_reconnect", true);
-	obs_data_set_default_bool(settings, "disconnect_on_title_mismatch", false);
-}
+static void sourceDefaults(obs_data_t *settings) { set_capture_defaults(settings); }
 
 static void sourceSave(void *opaque, obs_data_t *settings)
 {
 	auto state = static_cast<WaylandSource *>(opaque)->state;
-	std::lock_guard<std::mutex> lock(state->mutex);
-	auto size = state->frames->size();
-	obs_data_set_int(settings, "width", size.width);
-	obs_data_set_int(settings, "height", size.height);
-	write_capture_config(settings, state->config);
+	write_capture_state(settings, *state);
 }
 
 static bool connectClicked(obs_properties_t *, obs_property_t *, void *data)
@@ -99,7 +82,7 @@ static bool stopClicked(obs_properties_t *, obs_property_t *, void *data)
 static bool refreshClicked(obs_properties_t *, obs_property_t *, void *data)
 {
 	if (data) {
-		auto source = OBSGetStrongRef(static_cast<WaylandSource *>(data)->state->source);
+		auto source = OBSGetStrongRef(static_cast<WaylandSource *>(data)->source);
 		if (source)
 			obs_source_update_properties(source);
 	}
@@ -112,11 +95,8 @@ static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, o
 		return false;
 	auto state = static_cast<WaylandSource *>(opaque)->state;
 	auto uuid = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
-	{
-		std::lock_guard<std::mutex> lock(state->mutex);
-		if (state->config.preferredWindow == uuid)
-			return false;
-	}
+	if (state->configuration().preferredWindow == uuid)
+		return false;
 	for (const auto &window : capture_windows())
 		if (window.uuid == uuid) {
 			if (window.appId != QString::fromUtf8(obs_data_get_string(settings, "app_id")))
@@ -141,12 +121,12 @@ static obs_properties_t *sourceProperties(void *opaque)
 	CaptureConfig config;
 	if (opaque) {
 		auto state = static_cast<WaylandSource *>(opaque)->state;
-		std::lock_guard<std::mutex> lock(state->mutex);
-		std::string key = std::string("Status.") + capture_status_name(state->status);
+		auto diagnostic = state->diagnostics();
+		std::string key = std::string("Status.") + capture_status_name(diagnostic.status);
 		status = obs_module_text(key.c_str());
-		if (!state->detail.empty())
-			status += "\n" + state->detail;
-		config = state->config;
+		if (!diagnostic.detail.isEmpty())
+			status += "\n" + diagnostic.detail.toStdString();
+		config = state->configuration();
 	}
 	// OBS rebuilds the entire form on update_properties, interrupting edits.
 	// Keep diagnostics as an explicit snapshot instead of reloading on status changes.
