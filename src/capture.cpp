@@ -49,6 +49,7 @@ CaptureConfig read_capture_config(obs_data_t *settings)
 	config.rule.mode =
 	    static_cast<TitleMatch>(std::clamp<long long>(obs_data_get_int(settings, "title_match"), 0, 3));
 	config.rule.caseSensitive = obs_data_get_bool(settings, "case_sensitive");
+	config.rule.disconnectOnTitleMismatch = obs_data_get_bool(settings, "disconnect_on_title_mismatch");
 	config.preferredWindow = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
 	config.cursor = obs_data_get_bool(settings, "capture_cursor");
 	config.autoStart = obs_data_get_bool(settings, "auto_start");
@@ -63,6 +64,7 @@ void write_capture_config(obs_data_t *settings, const CaptureConfig &config)
 	obs_data_set_string(settings, "title_filter", config.rule.title.toUtf8().constData());
 	obs_data_set_int(settings, "title_match", int(config.rule.mode));
 	obs_data_set_bool(settings, "case_sensitive", config.rule.caseSensitive);
+	obs_data_set_bool(settings, "disconnect_on_title_mismatch", config.rule.disconnectOnTitleMismatch);
 	obs_data_set_string(settings, "selected_window", config.preferredWindow.toUtf8().constData());
 	obs_data_set_bool(settings, "capture_cursor", config.cursor);
 	obs_data_set_bool(settings, "auto_start", config.autoStart);

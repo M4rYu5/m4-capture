@@ -17,10 +17,11 @@ struct WindowRule {
 	QString title;
 	TitleMatch mode = TitleMatch::Contains;
 	bool caseSensitive = false;
+	bool disconnectOnTitleMismatch = false;
 	bool matches(const WindowInfo &window) const;
 	QString error() const;
 };
 
-// Keep a live selection even if its title changes; new candidates must match the rule.
+// Keep a live selection through title changes unless continuous title matching is enabled.
 QString select_window(const QList<WindowInfo> &windows, const WindowRule &rule, const QString &current,
 		      const QString &preferred, bool *ambiguous);

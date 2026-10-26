@@ -43,7 +43,8 @@ QString select_window(const QList<WindowInfo> &windows, const WindowRule &rule, 
 	*ambiguous = false;
 	QStringList matches;
 	for (const auto &window : windows) {
-		if (!current.isEmpty() && window.uuid == current && window.appId == rule.appId)
+		if (!current.isEmpty() && window.uuid == current && window.appId == rule.appId &&
+		    (!rule.disconnectOnTitleMismatch || rule.matches(window)))
 			return current;
 		if (rule.matches(window))
 			matches.append(window.uuid);

@@ -23,6 +23,7 @@ Properties include:
 | Title filter | Optional; empty matches any title in that application. |
 | Title matching | Contains, exact, wildcard, or regular expression. |
 | Case sensitive | Off by default. |
+| Disconnect when title no longer matches | Off by default; require the captured window to keep matching the title filter. |
 | Capture cursor | On by default; include the pointer in the video. |
 | Connect on OBS startup | On by default; wait silently when the application is absent. |
 | Automatically reconnect | On by default; reconnect when a matching window returns. |
@@ -30,10 +31,15 @@ Properties include:
 | Connect / retry capture | Start waiting/capture immediately, or retry an error. |
 | Stop capture and waiting | Stay stopped until Connect is clicked, or until the next OBS startup when startup connection is enabled. |
 
-The title filter is used to find a target. Once connected, title and focus changes
-keep the current window selected. A newly opened matching window does not take
-over an existing capture. If the selected window disappears and several windows
-match the saved rule, capture waits until the rule is narrowed or a target is chosen.
+By default, the title filter is used to find a target. Once connected, title and
+focus changes keep the current window selected. Enable **Disconnect when title
+no longer matches** to also enforce the title filter during capture. If the title
+stops matching, another matching window can become the target. Without a matching
+target, capture becomes transparent and waits when automatic reconnection is
+enabled, or stops until Connect is clicked otherwise. A newly opened matching
+window does not take over a capture whose title still matches. If the selected
+window disappears and several windows match the saved rule, capture waits until
+the rule is narrowed or a target is chosen.
 
 Closing a window or losing its stream clears the video immediately. Disconnected
 sources stay transparent and keep their last dimensions. A source with no captured

@@ -70,6 +70,7 @@ static void sourceDefaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "capture_cursor", true);
 	obs_data_set_default_bool(settings, "auto_start", true);
 	obs_data_set_default_bool(settings, "auto_reconnect", true);
+	obs_data_set_default_bool(settings, "disconnect_on_title_mismatch", false);
 }
 
 static void sourceSave(void *opaque, obs_data_t *settings)
@@ -167,6 +168,9 @@ static obs_properties_t *sourceProperties(void *opaque)
 	obs_property_list_add_int(match, obs_module_text("Match.Wildcard"), int(TitleMatch::Wildcard));
 	obs_property_list_add_int(match, obs_module_text("Match.Regex"), int(TitleMatch::Regex));
 	obs_properties_add_bool(props, "case_sensitive", obs_module_text("Source.CaseSensitive"));
+	auto disconnect = obs_properties_add_bool(props, "disconnect_on_title_mismatch",
+						  obs_module_text("Source.DisconnectOnTitleMismatch"));
+	obs_property_set_long_description(disconnect, obs_module_text("Source.DisconnectOnTitleMismatch.Help"));
 	obs_properties_add_bool(props, "capture_cursor", obs_module_text("Source.Cursor"));
 	obs_properties_add_bool(props, "auto_start", obs_module_text("Source.AutoStart"));
 	obs_properties_add_bool(props, "auto_reconnect", obs_module_text("Source.AutoReconnect"));
