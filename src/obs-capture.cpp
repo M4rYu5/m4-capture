@@ -77,7 +77,7 @@ std::shared_ptr<CaptureState> create_obs_capture_state(obs_source_t *source, obs
 		if (scene && raise_source_items(scene, source))
 			obs_frontend_save();
 	};
-	callbacks.error = [](const QString &error) { blog(LOG_WARNING, "[KCow] %s", error.toUtf8().constData()); };
+	callbacks.error = [](const QString &error) { blog(LOG_WARNING, "[KWinCapture] %s", error.toUtf8().constData()); };
 	return std::make_shared<CaptureState>(std::clamp<long long>(obs_data_get_int(settings, "width"), 1, 16384),
 					      std::clamp<long long>(obs_data_get_int(settings, "height"), 1, 16384),
 					      std::move(callbacks));

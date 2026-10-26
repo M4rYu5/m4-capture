@@ -2,8 +2,8 @@
 set -euo pipefail
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-build_dir="${WAYLANDCONNECT_BUILD_DIR:-$project_dir/build}"
-plugin_dir="${WAYLANDCONNECT_PLUGIN_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins/waylandconnect}"
+build_dir="${KWINCAPTURE_BUILD_DIR:-$project_dir/build}"
+plugin_dir="${KWINCAPTURE_PLUGIN_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins/waylandconnect}"
 
 usage() {
     cat <<'EOF'
@@ -17,16 +17,16 @@ Close OBS before install/update, then reopen it to load the new library.
 No sudo is needed. Flatpak OBS is not supported by this script.
 
 Optional environment variables:
-  WAYLANDCONNECT_BUILD_DIR   Build directory (default: project/build)
-  WAYLANDCONNECT_PLUGIN_DIR  Individual plugin install directory
-                            (default: $XDG_CONFIG_HOME/obs-studio/plugins/waylandconnect,
-                             falling back to ~/.config/obs-studio/plugins/waylandconnect)
+  KWINCAPTURE_BUILD_DIR   Build directory (default: project/build)
+  KWINCAPTURE_PLUGIN_DIR  Individual plugin install directory
+                         (default: $XDG_CONFIG_HOME/obs-studio/plugins/waylandconnect,
+                          falling back to ~/.config/obs-studio/plugins/waylandconnect)
 EOF
 }
 
 require_obs_closed() {
     if pgrep -u "$(id -u)" -x obs >/dev/null; then
-        echo "Close OBS before installing or updating KCow." >&2
+        echo "Close OBS before installing or updating KWinCapture." >&2
         exit 1
     fi
 }
@@ -45,8 +45,8 @@ case "${1:-help}" in
         build
         require_obs_closed
         cmake --install "$build_dir" --prefix "$plugin_dir"
-        printf '\nInstalled KCow to %s\n' "$plugin_dir"
-        echo "Open OBS, then Sources > + > KCow (KWin Capture)."
+        printf '\nInstalled KWinCapture to %s\n' "$plugin_dir"
+        echo "Open OBS, then Sources > + > KWin Capture."
         ;;
     help|-h|--help)
         usage

@@ -22,7 +22,7 @@ class CaptureTest : public QObject
 {
 	Q_OBJECT
 	KWinFixture kwin;
-	bool live = qEnvironmentVariableIsSet("WAYLANDCONNECT_LIVE_TEST");
+	bool live = qEnvironmentVariableIsSet("KWINCAPTURE_LIVE_TEST");
 
 	QString status(obs_source_t *source)
 	{
@@ -472,7 +472,7 @@ class CaptureTest : public QObject
 			QSKIP("Opt-in test captures only its own temporary Wayland window.");
 		auto makeWindow = [] {
 			auto w = std::make_unique<QWidget>(nullptr, Qt::FramelessWindowHint);
-			w->setWindowTitle("KCow live check");
+			w->setWindowTitle("KWinCapture live check");
 			w->setFixedSize(160, 90);
 			w->setStyleSheet("background-color: rgb(224, 128, 32)");
 			w->show();
@@ -483,10 +483,10 @@ class CaptureTest : public QObject
 		    ([&] {
 			    auto windows = capture_windows();
 			    return std::any_of(windows.begin(), windows.end(),
-					       [](const WindowInfo &w) { return w.appId == "waylandconnect-test"; });
+					       [](const WindowInfo &w) { return w.appId == "kwincapture-test"; });
 		    })(),
 		    5000);
-		OBSSourceAutoRelease target = source("Live target", "waylandconnect-test");
+		OBSSourceAutoRelease target = source("Live target", "kwincapture-test");
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
 		auto pixel = renderedPixel(target);
 		QCOMPARE(pixel.alpha(), 255);
@@ -508,7 +508,7 @@ class CaptureTest : public QObject
 int main(int argc, char **argv)
 {
 	QApplication app(argc, argv);
-	app.setDesktopFileName("waylandconnect-test");
+	app.setDesktopFileName("kwincapture-test");
 	auto display = wl_display_connect(nullptr);
 	if (!display) {
 		qCritical("Tests need a Wayland session for libobs graphics.");
@@ -529,7 +529,7 @@ int main(int argc, char **argv)
 	video.range = VIDEO_RANGE_FULL;
 	if (obs_reset_video(&video) != OBS_VIDEO_SUCCESS)
 		return 1;
-	register_waylandconnect_source();
+	register_kwincapture_source();
 	CaptureTest test;
 	int result = QTest::qExec(&test, argc, argv);
 	shutdown_capture();

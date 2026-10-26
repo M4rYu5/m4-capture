@@ -209,7 +209,7 @@ void TestVideo::tryLink()
 	for (auto &[id, port] : ports) {
 		if (port.second && port.first == producerNode)
 			output = id;
-		if (!port.second && nodes[port.first] == "KCow") {
+		if (!port.second && nodes[port.first] == "KWinCapture") {
 			input = id;
 			inputNode = port.first;
 		}

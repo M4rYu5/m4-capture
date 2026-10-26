@@ -212,9 +212,10 @@ static void sourceRender(void *opaque, gs_effect_t *)
 	gs_enable_framebuffer_srgb(previous);
 }
 
-void register_waylandconnect_source()
+void register_kwincapture_source()
 {
 	obs_source_info info{};
+	// Keep saved OBS scenes compatible across plugin renames.
 	info.id = "waylandconnect_source";
 	info.type = OBS_SOURCE_TYPE_INPUT;
 	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB;

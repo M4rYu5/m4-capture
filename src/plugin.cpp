@@ -5,18 +5,18 @@
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("waylandconnect", "en-US")
 
-MODULE_EXPORT const char *obs_module_name() { return "KCow"; }
+MODULE_EXPORT const char *obs_module_name() { return "KWinCapture"; }
 
 MODULE_EXPORT const char *obs_module_description()
 {
-	return "Persistent window capture for OBS Studio on KDE Plasma Wayland.";
+	return "An OBS Studio window capture plugin for KDE Plasma Wayland with automatic reconnection.";
 }
 
 bool obs_module_load()
 {
 	initialize_capture();
-	register_waylandconnect_source();
-	blog(LOG_INFO, "[KCow] version %s loaded", WAYLANDCONNECT_VERSION);
+	register_kwincapture_source();
+	blog(LOG_INFO, "[KWinCapture] version %s loaded", KWINCAPTURE_VERSION);
 	return true;
 }
 

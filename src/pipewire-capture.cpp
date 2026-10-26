@@ -35,7 +35,7 @@ bool PipeWireCapture::start(int fd, uint32_t node, const QString &serial)
 	static std::once_flag initialized;
 	std::call_once(initialized, [] { pw_init(nullptr, nullptr); });
 	nodeId = node;
-	loop = pw_thread_loop_new("kcow", nullptr);
+	loop = pw_thread_loop_new("kwincapture", nullptr);
 	if (!loop) {
 		if (fd >= 0)
 			close(fd);
@@ -68,11 +68,11 @@ bool PipeWireCapture::start(int fd, uint32_t node, const QString &serial)
 		return events;
 	}();
 	pw_registry_add_listener(registry, &registryListener, &registryEvents, this);
-	auto properties = pw_properties_new(PW_KEY_NODE_NAME, "KCow", PW_KEY_MEDIA_TYPE, "Video", PW_KEY_MEDIA_CATEGORY,
+	auto properties = pw_properties_new(PW_KEY_NODE_NAME, "KWinCapture", PW_KEY_MEDIA_TYPE, "Video", PW_KEY_MEDIA_CATEGORY,
 					    "Capture", PW_KEY_MEDIA_ROLE, "Screen", nullptr);
 	if (!serial.isEmpty())
 		pw_properties_set(properties, PW_KEY_TARGET_OBJECT, serial.toUtf8().constData());
-	stream = pw_stream_new(core, "KCow", properties);
+	stream = pw_stream_new(core, "KWinCapture", properties);
 	if (!stream)
 		return false;
 	static const pw_stream_events streamEvents = [] {

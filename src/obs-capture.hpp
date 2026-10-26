@@ -3,7 +3,7 @@
 #include "capture.hpp"
 #include <obs.hpp>
 
-void register_waylandconnect_source();
+void register_kwincapture_source();
 CaptureConfig read_capture_config(obs_data_t *settings);
 void write_capture_config(obs_data_t *settings, const CaptureConfig &config);
 void write_capture_state(obs_data_t *settings, const CaptureState &state);

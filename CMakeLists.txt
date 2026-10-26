@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(KCow VERSION 0.3.0 LANGUAGES C CXX)
+project(KWinCapture VERSION 0.3.0 LANGUAGES C CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(FATAL_ERROR "KCow currently targets Linux.")
+  message(FATAL_ERROR "KWinCapture currently targets Linux.")
 endif()
 
 find_package(libobs REQUIRED CONFIG)
@@ -52,18 +52,20 @@ set_target_properties(capture-core PROPERTIES
 set(OBS_SOURCES
   src/obs-capture.cpp src/obs-capture.hpp
   src/focus-order.cpp
-  src/waylandconnect-source.cpp
+  src/kwincapture-source.cpp
 )
-add_library(waylandconnect MODULE src/plugin.cpp ${OBS_SOURCES})
-target_link_libraries(waylandconnect PRIVATE
+add_library(kwincapture MODULE src/plugin.cpp ${OBS_SOURCES})
+target_link_libraries(kwincapture PRIVATE
   capture-core OBS::libobs OBS::obs-frontend-api Qt6::Widgets
 )
-target_compile_features(waylandconnect PRIVATE cxx_std_17)
-target_compile_options(waylandconnect PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(waylandconnect PRIVATE
-  WAYLANDCONNECT_VERSION="${PROJECT_VERSION}"
+target_compile_features(kwincapture PRIVATE cxx_std_17)
+target_compile_options(kwincapture PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(kwincapture PRIVATE
+  KWINCAPTURE_VERSION="${PROJECT_VERSION}"
 )
-set_target_properties(waylandconnect PROPERTIES
+set_target_properties(kwincapture PROPERTIES
+  # Keep the installed module filename stable for existing installations.
+  OUTPUT_NAME "waylandconnect"
   PREFIX ""
   C_VISIBILITY_PRESET hidden
   CXX_VISIBILITY_PRESET hidden
@@ -71,12 +73,12 @@ set_target_properties(waylandconnect PROPERTIES
 )
 
 # CMAKE_INSTALL_PREFIX is the individual plugin directory in OBS's user plugins.
-install(TARGETS waylandconnect LIBRARY DESTINATION bin/64bit)
+install(TARGETS kwincapture LIBRARY DESTINATION bin/64bit)
 install(DIRECTORY data/ DESTINATION data)
 install(FILES LICENSE DESTINATION .)
 
-option(WAYLANDCONNECT_BUILD_TESTS "Build window matching and capture lifecycle tests" OFF)
-if(WAYLANDCONNECT_BUILD_TESTS)
+option(KWINCAPTURE_BUILD_TESTS "Build window matching and capture lifecycle tests" OFF)
+if(KWINCAPTURE_BUILD_TESTS)
   enable_testing()
   find_package(Qt6 REQUIRED COMPONENTS Test)
   add_executable(window-rule-tests tests/window-rule-test.cpp src/window-rule.cpp)
@@ -117,17 +119,17 @@ if(WAYLANDCONNECT_BUILD_TESTS)
   set_target_properties(capture-controller-tests PROPERTIES AUTOMOC ON)
   add_test(NAME capture-controller COMMAND $<TARGET_FILE:capture-controller-tests>)
 
-  add_executable(waylandconnect-tests
+  add_executable(kwincapture-tests
     tests/capture-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
     ${OBS_SOURCES}
     ${TEST_PROTOCOL_HEADERS}
   )
-  target_include_directories(waylandconnect-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
-  target_compile_features(waylandconnect-tests PRIVATE cxx_std_17)
-  target_link_libraries(waylandconnect-tests PRIVATE
+  target_include_directories(kwincapture-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_features(kwincapture-tests PRIVATE cxx_std_17)
+  target_link_libraries(kwincapture-tests PRIVATE
     capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::WAYLAND_SERVER
   )
-  set_target_properties(waylandconnect-tests PROPERTIES AUTOMOC ON)
-  add_test(NAME obs-integration COMMAND $<TARGET_FILE:waylandconnect-tests>)
+  set_target_properties(kwincapture-tests PROPERTIES AUTOMOC ON)
+  add_test(NAME obs-integration COMMAND $<TARGET_FILE:kwincapture-tests>)
   set_tests_properties(obs-integration PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

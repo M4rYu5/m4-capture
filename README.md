@@ -1,12 +1,12 @@
-# KCow
+# KWinCapture
 
-Persistent window capture for OBS Studio on KDE Plasma Wayland.
+An OBS Studio window capture plugin for KDE Plasma Wayland with automatic reconnection.
 
-KCow uses KWin's window-management and screencast interfaces with PipeWire video.
+KWinCapture uses KWin's window-management and screencast interfaces with PipeWire video.
 
 ## Choose a window
 
-Add **Sources → + → KCow (KWin Capture)** and open Properties. The **Window** dropdown
+Add **Sources → + → KWin Capture** and open Properties. The **Window** dropdown
 lists open windows by application ID and title. Selecting one fills the application
 ID. **Refresh window list** refreshes the choices. There is no portal sharing chooser.
 
@@ -100,8 +100,10 @@ Reopen OBS to load the replacement library. Existing sources keep their source I
 (`waylandconnect_source`). Native plugins are not hot-reloaded. The script refuses
 to replace the library while OBS is running and requires no sudo.
 
-The module filename, install directory, and source ID retain their original
-internal names so updates keep existing installations and saved scenes working.
+The module filename, install directory, locale lookup, and saved source ID retain
+their original internal names for compatibility with existing installations and
+saved scenes. The plugin is displayed as **KWinCapture**, with **KWin Capture** in
+the OBS source list.
 
 Installed files:
 
@@ -111,18 +113,18 @@ Installed files:
 └── data/locale/en-US.ini
 ```
 
-`XDG_CONFIG_HOME` is respected. `WAYLANDCONNECT_PLUGIN_DIR` overrides the individual
-plugin directory; `WAYLANDCONNECT_BUILD_DIR` overrides the build directory.
+`XDG_CONFIG_HOME` is respected. `KWINCAPTURE_PLUGIN_DIR` overrides the individual
+plugin directory; `KWINCAPTURE_BUILD_DIR` overrides the build directory.
 Compile without installing with `./scripts/dev.sh build`. Builds include debug
 symbols. Launch `obs --verbose`, or `gdb --args obs --verbose`, for debugging.
-OBS's current log contains `[KCow]` messages.
+OBS's current log contains `[KWinCapture]` messages.
 
 To remove the plugin, close OBS and remove its individual plugin directory.
 
 ## Development checks
 
 ```sh
-cmake -S . -B build -DWAYLANDCONNECT_BUILD_TESTS=ON
+cmake -S . -B build -DKWINCAPTURE_BUILD_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
@@ -144,7 +146,7 @@ An opt-in live test captures only its own temporary window, closes it, and opens
 a replacement to check real KWin reconnection:
 
 ```sh
-QT_QPA_PLATFORM=wayland WAYLANDCONNECT_LIVE_TEST=1 ./build/waylandconnect-tests liveKWinCapture
+QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-tests liveKWinCapture
 ```
 
 ## Implementation
@@ -157,7 +159,7 @@ QT_QPA_PLATFORM=wayland WAYLANDCONNECT_LIVE_TEST=1 ./build/waylandconnect-tests 
 - `src/focus-order.cpp`: ordering items inside their existing containers.
 - `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
 - `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.
-- `src/waylandconnect-source.cpp`: OBS properties, saved configuration, and rendering.
+- `src/kwincapture-source.cpp`: OBS properties, saved configuration, and rendering.
 
 Capture configuration and diagnostics are accessed through synchronized snapshots.
 The frame buffer has its own synchronization; controller ownership and callbacks
@@ -185,6 +187,6 @@ High-resolution/frame-rate performance has not been profiled.
 
 ## License
 
-KCow is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
+KWinCapture is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
 
 The bundled Wayland protocol files retain their upstream licenses; see [protocols/README.md](protocols/README.md).
