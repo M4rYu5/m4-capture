@@ -67,8 +67,11 @@ windows on the desktop.
 - Native Linux OBS Studio with its development headers, frontend API, and Qt 6 UI.
 - KDE Plasma Wayland exposing `org_kde_plasma_window_management` version 17+ and
   `zkde_screencast_unstable_v1`.
-- PipeWire and Wayland development headers, Qt 6 Widgets, a C++17 compiler,
+- PipeWire and Wayland development headers, Qt 6 Core, a C++17 compiler,
   CMake 3.24+, Ninja, pkg-config, and `pgrep`.
+
+The optional test build also requires Qt 6 Test, Qt 6 Widgets, and Wayland server
+development headers. The plugin itself uses Qt 6 Core.
 
 On Arch Linux:
 

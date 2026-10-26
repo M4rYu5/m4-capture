@@ -8,7 +8,7 @@ endif()
 
 find_package(libobs REQUIRED CONFIG)
 find_package(obs-frontend-api REQUIRED CONFIG)
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3>=0.3.40)
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
@@ -56,7 +56,7 @@ set(OBS_SOURCES
 )
 add_library(kwincapture MODULE src/plugin.cpp ${OBS_SOURCES})
 target_link_libraries(kwincapture PRIVATE
-  capture-core OBS::libobs OBS::obs-frontend-api Qt6::Widgets
+  capture-core OBS::libobs OBS::obs-frontend-api
 )
 target_compile_features(kwincapture PRIVATE cxx_std_17)
 target_compile_options(kwincapture PRIVATE -Wall -Wextra -Wpedantic)
@@ -80,7 +80,7 @@ install(FILES LICENSE DESTINATION .)
 option(KWINCAPTURE_BUILD_TESTS "Build window matching and capture lifecycle tests" OFF)
 if(KWINCAPTURE_BUILD_TESTS)
   enable_testing()
-  find_package(Qt6 REQUIRED COMPONENTS Test)
+  find_package(Qt6 REQUIRED COMPONENTS Test Widgets)
   add_executable(window-rule-tests tests/window-rule-test.cpp src/window-rule.cpp)
   target_include_directories(window-rule-tests PRIVATE src)
   target_compile_features(window-rule-tests PRIVATE cxx_std_17)
