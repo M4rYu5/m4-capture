@@ -30,6 +30,8 @@ bool KWinFixture::start()
 
 void KWinFixture::flush() { wl_display_flush_clients(display); }
 
+void KWinFixture::disconnectClients() { wl_display_destroy_clients(display); }
+
 void KWinFixture::bindManagement(wl_client *client, void *data, uint32_t version, uint32_t id)
 {
 	auto self = static_cast<KWinFixture *>(data);
@@ -92,6 +94,8 @@ void KWinFixture::bindScreencast(wl_client *client, void *data, uint32_t version
 			self->requestedWindow = QString::fromUtf8(uuid);
 			self->cursorMode = cursor;
 			++self->captureRequests;
+			if (self->deferCapture)
+				return;
 			if (self->reject)
 				zkde_screencast_stream_unstable_v1_send_failed(stream, "test capture error");
 			else {

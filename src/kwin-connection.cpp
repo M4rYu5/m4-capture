@@ -129,6 +129,8 @@ bool KWinConnection::available() const { return initialized && management && scr
 QList<WindowInfo> KWinConnection::windows() const
 {
 	QList<WindowInfo> result;
+	if (!available())
+		return result;
 	for (const auto &[uuid, window] : entries)
 		if (window->ready && window->mapped && !window->info.appId.isEmpty())
 			result.append(window->info);

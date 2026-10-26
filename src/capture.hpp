@@ -39,12 +39,11 @@ struct CaptureState {
 	bool frameDirty = false;
 	CaptureStatus status = CaptureStatus::Idle;
 	std::string detail;
-	QString matchedWindow;
 	std::atomic<bool> alive{true};
 	OBSWeakSource source;
 	// Only touched on the Qt UI thread.
 	QPointer<KWinCapture> controller;
-	void clear(CaptureStatus next, const std::string &message = {});
+	void clearFrame();
 };
 
 void initialize_capture();

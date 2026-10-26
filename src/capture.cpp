@@ -15,7 +15,7 @@ KWinConnection *connection = nullptr;
 std::mutex windowsMutex;
 QList<WindowInfo> windowsSnapshot;
 
-bool ruleChanged(const CaptureConfig &a, const CaptureConfig &b)
+bool requiresStreamRestart(const CaptureConfig &a, const CaptureConfig &b)
 {
 	return a.rule.appId != b.rule.appId || a.rule.title != b.rule.title || a.rule.mode != b.rule.mode ||
 	       a.rule.caseSensitive != b.rule.caseSensitive || a.preferredWindow != b.preferredWindow ||
@@ -34,14 +34,12 @@ void ensureConnection()
 }
 } // namespace
 
-void CaptureState::clear(CaptureStatus next, const std::string &message)
+void CaptureState::clearFrame()
 {
 	std::lock_guard<std::mutex> lock(mutex);
 	hasFrame = false;
 	frameDirty = false;
 	pixels.clear();
-	status = next;
-	detail = message;
 }
 
 CaptureConfig read_capture_config(obs_data_t *settings)
@@ -165,7 +163,7 @@ void KWinCapture::action(CaptureAction action)
 		std::lock_guard<std::mutex> lock(state->mutex);
 		next = state->config;
 	}
-	bool changed = !configured || ruleChanged(next, config);
+	bool changed = !configured || requiresStreamRestart(next, config);
 	if (!configured) {
 		armed = next.autoStart;
 		configured = true;
@@ -190,6 +188,8 @@ void KWinCapture::action(CaptureAction action)
 		stopStream();
 		current.clear();
 		wasFocused = false;
+		if (!armed)
+			status(CaptureStatus::Idle);
 	}
 	reconcile();
 }
@@ -202,7 +202,7 @@ void KWinCapture::stopStream()
 	stream.reset();
 	if (backend->available())
 		backend->flush();
-	state->clear(CaptureStatus::Idle);
+	state->clearFrame();
 }
 
 void KWinCapture::status(CaptureStatus next, const QString &detail)
@@ -242,8 +242,9 @@ void KWinCapture::reconcile()
 	}
 	if (!backend->available()) {
 		if (stream)
-			stopStream();
-		status(CaptureStatus::Failed, backend->error());
+			failed(backend->error());
+		else
+			status(CaptureStatus::Failed, backend->error());
 		return;
 	}
 	if (!config.rule.error().isEmpty()) {
@@ -278,10 +279,6 @@ void KWinCapture::reconcile()
 	for (const auto &window : windows)
 		if (window.uuid == current)
 			focused(window);
-	{
-		std::lock_guard<std::mutex> lock(state->mutex);
-		state->matchedWindow = current;
-	}
 	if (!stream && !retry.isActive())
 		startStream();
 }
@@ -318,22 +315,17 @@ void KWinCapture::startStream()
 				    },
 				    Qt::QueuedConnection);
 			},
-			[this, attempt] {
+			[this, attempt](CaptureStatus next) {
 				QMetaObject::invokeMethod(
 				    this,
-				    [this, attempt] {
+				    [this, attempt, next] {
 					    if (generation != attempt)
 						    return;
-					    bool frame;
-					    {
-						    std::lock_guard<std::mutex> lock(state->mutex);
-						    frame = state->hasFrame;
-					    }
-					    if (frame) {
+					    status(next);
+					    if (next == CaptureStatus::Capturing) {
 						    deadline.stop();
 						    persist();
 					    }
-					    refreshProperties();
 				    },
 				    Qt::QueuedConnection);
 			});

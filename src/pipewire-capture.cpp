@@ -4,12 +4,10 @@
 #include <spa/param/video/format-utils.h>
 #include <spa/pod/builder.h>
 
-#include <algorithm>
-#include <cstring>
 #include <unistd.h>
 
 PipeWireCapture::PipeWireCapture(std::shared_ptr<CaptureState> state, std::function<void(QString)> failed,
-				 std::function<void()> changed)
+				 std::function<void(CaptureStatus)> changed)
     : state(std::move(state)), failed(std::move(failed)), changed(std::move(changed))
 {
 }
@@ -114,7 +112,7 @@ void PipeWireCapture::fail(const QString &message)
 	if (stopping || failedOnce)
 		return;
 	failedOnce = true;
-	state->clear(CaptureStatus::Failed, message.toStdString());
+	state->clearFrame();
 	failed(message);
 }
 
@@ -124,8 +122,8 @@ void PipeWireCapture::onState(void *data, pw_stream_state old, pw_stream_state n
 	if (next == PW_STREAM_STATE_ERROR || next == PW_STREAM_STATE_UNCONNECTED)
 		self->fail(QStringLiteral("PipeWire stream disconnected: %1").arg(error ? error : "closed"));
 	else if (next == PW_STREAM_STATE_PAUSED) {
-		self->state->clear(old == PW_STREAM_STATE_STREAMING ? CaptureStatus::Idle : CaptureStatus::Connecting);
-		self->changed();
+		self->state->clearFrame();
+		self->changed(old == PW_STREAM_STATE_STREAMING ? CaptureStatus::Idle : CaptureStatus::Connecting);
 	}
 }
 
@@ -152,15 +150,11 @@ void PipeWireCapture::onParam(void *data, uint32_t id, const spa_pod *param)
 void PipeWireCapture::formatChanged(const spa_pod *param)
 {
 	format = {};
-	state->clear(CaptureStatus::Connecting);
-	changed();
+	state->clearFrame();
+	changed(CaptureStatus::Connecting);
 	if (!param)
 		return;
-	if (spa_format_video_raw_parse(param, &format) < 0 || !format.size.width || !format.size.height ||
-	    format.size.width > 16384 || format.size.height > 16384 ||
-	    uint64_t(format.size.width) * format.size.height > 64 * 1024 * 1024 ||
-	    (format.format != SPA_VIDEO_FORMAT_BGRA && format.format != SPA_VIDEO_FORMAT_BGRx &&
-	     format.format != SPA_VIDEO_FORMAT_RGBA && format.format != SPA_VIDEO_FORMAT_RGBx)) {
+	if (spa_format_video_raw_parse(param, &format) < 0 || !supported_video_format(format)) {
 		fail(QStringLiteral("The compositor supplied an unsupported video format."));
 		return;
 	}
@@ -197,90 +191,33 @@ void PipeWireCapture::process()
 	}
 	if (!latest)
 		return;
-	auto buffer = latest->buffer;
-	if (!failedOnce && state->alive && buffer->n_datas && format.size.width && format.size.height) {
-		auto &plane = buffer->datas[0];
-		auto chunk = plane.chunk;
-		if (!plane.data || !chunk || plane.type == SPA_DATA_DmaBuf) {
+	if (!failedOnce && state->alive && format.size.width && format.size.height) {
+		switch (convert_video_frame(*latest->buffer, format, scratch)) {
+		case FrameResult::Ready: {
+			std::lock_guard<std::mutex> lock(state->mutex);
+			notify = !state->hasFrame || state->width != scratch.width || state->height != scratch.height;
+			state->pixels.swap(scratch.pixels);
+			state->width = scratch.width;
+			state->height = scratch.height;
+			state->hasFrame = true;
+			state->frameDirty = true;
+			break;
+		}
+		case FrameResult::Empty:
+			// Metadata-only or corrupted buffers do not replace a valid frame.
+			break;
+		case FrameResult::UnsupportedFormat:
+			fail(QStringLiteral("The compositor supplied an unsupported video format."));
+			break;
+		case FrameResult::UnmappedBuffer:
 			fail(QStringLiteral("The compositor did not provide mapped video buffers."));
-		} else if (!chunk->size || (chunk->flags & SPA_CHUNK_FLAG_CORRUPTED)) {
-			// Metadata-only buffers do not replace a valid frame. Actual disconnects
-			// are handled by the stream, node, core, and portal lifecycle events.
-		} else {
-			int64_t stride = chunk->stride ? chunk->stride : int64_t(format.size.width) * 4;
-			int64_t first = chunk->offset;
-			int64_t last = first + int64_t(format.size.height - 1) * stride;
-			uint64_t end = std::max(first, last) + uint64_t(format.size.width) * 4;
-			if (std::min(first, last) < 0 || end > plane.maxsize ||
-			    uint64_t(std::abs(stride)) < uint64_t(format.size.width) * 4 ||
-			    end - std::min(first, last) > chunk->size) {
-				fail(QStringLiteral("PipeWire supplied an invalid video buffer layout."));
-			} else {
-				uint32_t x = 0, y = 0, width = format.size.width, height = format.size.height;
-				auto crop = static_cast<spa_meta_region *>(
-				    spa_buffer_find_meta_data(buffer, SPA_META_VideoCrop, sizeof(spa_meta_region)));
-				if (crop && spa_meta_region_is_valid(crop) && crop->region.position.x >= 0 &&
-				    crop->region.position.y >= 0 &&
-				    uint64_t(crop->region.position.x) + crop->region.size.width <= width &&
-				    uint64_t(crop->region.position.y) + crop->region.size.height <= height) {
-					x = crop->region.position.x;
-					y = crop->region.position.y;
-					width = crop->region.size.width;
-					height = crop->region.size.height;
-				}
-				auto transform = static_cast<spa_meta_videotransform *>(spa_buffer_find_meta_data(
-				    buffer, SPA_META_VideoTransform, sizeof(spa_meta_videotransform)));
-				uint32_t rotation = transform ? (transform->transform & 3) : 0;
-				bool flip = transform && (transform->transform & 4);
-				uint32_t outputWidth = (rotation & 1) ? height : width;
-				uint32_t outputHeight = (rotation & 1) ? width : height;
-				scratch.resize(size_t(outputWidth) * outputHeight * 4);
-				bool rgb =
-				    format.format == SPA_VIDEO_FORMAT_RGBA || format.format == SPA_VIDEO_FORMAT_RGBx;
-				bool opaque =
-				    format.format == SPA_VIDEO_FORMAT_BGRx || format.format == SPA_VIDEO_FORMAT_RGBx;
-				auto bytes = static_cast<const uint8_t *>(plane.data);
-				for (uint32_t row = 0; row < height; ++row) {
-					auto input = bytes + first + int64_t(y + row) * stride + x * 4;
-					if (!rotation && !flip && !rgb && !opaque) {
-						std::memcpy(scratch.data() + size_t(row) * width * 4, input,
-							    size_t(width) * 4);
-						continue;
-					}
-					for (uint32_t column = 0; column < width; ++column) {
-						uint32_t cx = flip ? width - 1 - column : column;
-						uint32_t dx = cx, dy = row;
-						if (rotation == 1) {
-							dx = row;
-							dy = width - 1 - cx;
-						} else if (rotation == 2) {
-							dx = width - 1 - cx;
-							dy = height - 1 - row;
-						} else if (rotation == 3) {
-							dx = height - 1 - row;
-							dy = cx;
-						}
-						auto pixel = input + column * 4;
-						auto output = scratch.data() + (size_t(dy) * outputWidth + dx) * 4;
-						output[0] = pixel[rgb ? 2 : 0];
-						output[1] = pixel[1];
-						output[2] = pixel[rgb ? 0 : 2];
-						output[3] = opaque ? 255 : pixel[3];
-					}
-				}
-				std::lock_guard<std::mutex> lock(state->mutex);
-				state->pixels.swap(scratch);
-				state->width = outputWidth;
-				state->height = outputHeight;
-				state->hasFrame = true;
-				state->frameDirty = true;
-				notify = state->status != CaptureStatus::Capturing;
-				state->status = CaptureStatus::Capturing;
-				state->detail.clear();
-			}
+			break;
+		case FrameResult::InvalidLayout:
+			fail(QStringLiteral("PipeWire supplied an invalid video buffer layout."));
+			break;
 		}
 	}
 	pw_stream_queue_buffer(stream, latest);
 	if (notify)
-		changed();
+		changed(CaptureStatus::Capturing);
 }

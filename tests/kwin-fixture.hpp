@@ -20,6 +20,7 @@ class KWinFixture : public QObject
 	void clear();
 	void focus(const QString &uuid);
 	void title(const QString &uuid, const QString &title);
+	void disconnectClients();
 	QString socketPath() const { return directory.path() + "/wayland-test"; }
 	uint32_t videoNode = 42;
 	uint64_t videoSerial = 0;
@@ -27,6 +28,7 @@ class KWinFixture : public QObject
 	int captureRequests = 0;
 	QString requestedWindow;
 	bool reject = false;
+	bool deferCapture = false;
 
       private:
 	QTemporaryDir directory;

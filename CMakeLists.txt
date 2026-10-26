@@ -30,6 +30,7 @@ set(CAPTURE_SOURCES
   src/capture.cpp src/capture.hpp
   src/kwin-connection.cpp src/kwin-connection.hpp
   src/pipewire-capture.cpp src/pipewire-capture.hpp
+  src/video-frame.cpp src/video-frame.hpp
   src/window-rule.cpp src/window-rule.hpp
   src/focus-order.cpp
   src/waylandconnect-source.cpp src/source-list.cpp
@@ -65,6 +66,12 @@ option(WAYLANDCONNECT_BUILD_TESTS "Build window matching and capture lifecycle t
 if(WAYLANDCONNECT_BUILD_TESTS)
   enable_testing()
   find_package(Qt6 REQUIRED COMPONENTS Test)
+  add_executable(video-frame-tests tests/video-frame-test.cpp src/video-frame.cpp)
+  target_include_directories(video-frame-tests PRIVATE src)
+  target_compile_features(video-frame-tests PRIVATE cxx_std_17)
+  target_link_libraries(video-frame-tests PRIVATE Qt6::Test PkgConfig::PIPEWIRE)
+  set_target_properties(video-frame-tests PROPERTIES AUTOMOC ON)
+  add_test(NAME video-frame COMMAND $<TARGET_FILE:video-frame-tests>)
   pkg_check_modules(WAYLAND_SERVER REQUIRED IMPORTED_TARGET wayland-server)
   set(TEST_PROTOCOL_HEADERS)
   foreach(PROTOCOL plasma-window-management zkde-screencast-unstable-v1)

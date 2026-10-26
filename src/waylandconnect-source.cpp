@@ -4,6 +4,7 @@
 
 struct WaylandSource {
 	std::shared_ptr<CaptureState> state = std::make_shared<CaptureState>();
+	std::vector<uint8_t> uploadPixels;
 	gs_texture_t *texture = nullptr;
 	uint32_t textureWidth = 0, textureHeight = 0;
 };
@@ -186,28 +187,38 @@ static void sourceRender(void *opaque, gs_effect_t *)
 {
 	auto data = static_cast<WaylandSource *>(opaque);
 	auto state = data->state;
-	std::lock_guard<std::mutex> lock(state->mutex);
-	if (!state->hasFrame)
-		return;
-	if (!data->texture || data->textureWidth != state->width || data->textureHeight != state->height) {
+	uint32_t width, height;
+	bool upload;
+	{
+		std::lock_guard<std::mutex> lock(state->mutex);
+		if (!state->hasFrame)
+			return;
+		width = state->width;
+		height = state->height;
+		upload = state->frameDirty;
+		if (upload) {
+			data->uploadPixels.swap(state->pixels);
+			state->frameDirty = false;
+		}
+	}
+	if (!data->texture || data->textureWidth != width || data->textureHeight != height) {
 		gs_texture_destroy(data->texture);
-		data->texture = gs_texture_create(state->width, state->height, GS_BGRA, 1, nullptr, GS_DYNAMIC);
-		data->textureWidth = state->width;
-		data->textureHeight = state->height;
-		state->frameDirty = true;
+		data->texture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, GS_DYNAMIC);
+		data->textureWidth = width;
+		data->textureHeight = height;
+		upload = true;
 	}
 	if (!data->texture)
 		return;
-	if (state->frameDirty) {
-		gs_texture_set_image(data->texture, state->pixels.data(), state->width * 4, false);
-		state->frameDirty = false;
-	}
+	if (upload)
+		gs_texture_set_image(data->texture, data->uploadPixels.data(), width * 4, false);
+
 	auto effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	bool previous = gs_framebuffer_srgb_enabled();
 	gs_enable_framebuffer_srgb(true);
 	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"), data->texture);
 	while (gs_effect_loop(effect, "Draw"))
-		gs_draw_sprite(data->texture, 0, state->width, state->height);
+		gs_draw_sprite(data->texture, 0, width, height);
 	gs_enable_framebuffer_srgb(previous);
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "capture.hpp"
+#include "video-frame.hpp"
 
 #include <pipewire/pipewire.h>
 #include <spa/param/video/raw.h>
@@ -11,14 +12,14 @@ class PipeWireCapture
 {
       public:
 	PipeWireCapture(std::shared_ptr<CaptureState> state, std::function<void(QString)> failed,
-			std::function<void()> changed);
+			std::function<void(CaptureStatus)> changed);
 	~PipeWireCapture();
 	bool start(int fd, uint32_t node, const QString &serial);
 
       private:
 	std::shared_ptr<CaptureState> state;
 	std::function<void(QString)> failed;
-	std::function<void()> changed;
+	std::function<void(CaptureStatus)> changed;
 	pw_thread_loop *loop = nullptr;
 	pw_context *context = nullptr;
 	pw_core *core = nullptr;
@@ -28,7 +29,7 @@ class PipeWireCapture
 	spa_hook registryListener{};
 	spa_hook streamListener{};
 	spa_video_info_raw format{};
-	std::vector<uint8_t> scratch;
+	VideoFrame scratch;
 	uint32_t nodeId = 0;
 	bool started = false;
 	bool stopping = false;

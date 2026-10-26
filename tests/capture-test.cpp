@@ -99,7 +99,11 @@ class CaptureTest : public QObject
 			kwin.clear();
 		}
 	}
-	void init() { kwin.reject = true; }
+	void init()
+	{
+		kwin.reject = true;
+		kwin.deferCapture = false;
+	}
 	void cleanup()
 	{
 		shutdown_source_list();
@@ -189,6 +193,29 @@ class CaptureTest : public QObject
 		QCOMPARE(kwin.captureRequests, requests);
 		action(target, "connect");
 		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+	}
+
+	void stopRefreshesProperties()
+	{
+		kwin.deferCapture = true;
+		kwin.add({"pending", "test.app", "Pending capture", false});
+		int updates = 0;
+		OBSSourceAutoRelease target = source("Stop properties");
+		auto handler = obs_source_get_signal_handler(target);
+		auto updated = [](void *data, calldata_t *) { ++*static_cast<int *>(data); };
+		signal_handler_connect(handler, "update_properties", updated, &updates);
+		QTRY_COMPARE(status(target), QString("connecting"));
+		auto props = obs_source_properties(target);
+		QVERIFY(!obs_property_enabled(obs_properties_get(props, "connect")));
+		obs_properties_destroy(props);
+		int before = updates;
+		action(target, "stop");
+		QTRY_COMPARE(status(target), QString("idle"));
+		QVERIFY(updates > before);
+		props = obs_source_properties(target);
+		QVERIFY(obs_property_enabled(obs_properties_get(props, "connect")));
+		obs_properties_destroy(props);
+		signal_handler_disconnect(handler, "update_properties", updated, &updates);
 	}
 
 	void settingsAndPickerRoundTrip()
@@ -336,6 +363,47 @@ class CaptureTest : public QObject
 		QCOMPARE(kwin.captureRequests, requests + 1);
 		action(target, "connect");
 		QTRY_COMPARE(kwin.captureRequests, requests + 2);
+	}
+
+	void backendDisconnectRespectsReconnectSetting_data()
+	{
+		QTest::addColumn<bool>("automatic");
+		QTest::newRow("automatic") << true;
+		QTest::newRow("manual") << false;
+	}
+
+	void backendDisconnectRespectsReconnectSetting()
+	{
+		QFETCH(bool, automatic);
+		TestVideo video;
+		QVERIFY(video.start());
+		QVERIFY(video.startProducer());
+		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
+		kwin.reject = false;
+		kwin.videoNode = video.nodeId();
+		kwin.videoSerial = video.serial();
+		kwin.add({"backend", "test.app", "Backend reconnect", false});
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		obs_data_set_bool(settings, "auto_reconnect", automatic);
+		OBSSourceAutoRelease target =
+		    obs_source_create("waylandconnect_source", "Backend reconnect", settings, nullptr);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		int requests = kwin.captureRequests;
+		kwin.disconnectClients();
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("failed"), 1000);
+		QVERIFY(capture_windows().isEmpty());
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+		QCOMPARE(obs_source_get_width(target), uint32_t(160));
+		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
+		if (!automatic) {
+			QCOMPARE(status(target), QString("failed"));
+			QCOMPARE(kwin.captureRequests, requests);
+			action(target, "connect");
+		}
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(renderedPixel(target).alpha(), 255);
 	}
 
 	void rowButtonGoesBeforeEyeAndStartsCapture()
