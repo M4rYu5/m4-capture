@@ -112,6 +112,167 @@ class CaptureControllerTest : public QObject
 		QTRY_COMPARE(kwin.captureRequests, requests + 2);
 	}
 
+	void reenablingAutomaticReconnectRetriesFailedCapture()
+	{
+		kwin.add({"retry", "test.app", "Failed capture", false});
+		CaptureConfig config;
+		config.autoReconnect = false;
+		auto target = capture(config);
+		QTRY_COMPARE(status(target), QString("failed"));
+		int requests = kwin.captureRequests;
+		kwin.deferCapture = true;
+		config = target->configuration();
+		config.autoReconnect = true;
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(status(target), QString("connecting"));
+	}
+
+	void enablingStartupCaptureStartsImmediately()
+	{
+		kwin.deferCapture = true;
+		kwin.add({"startup", "test.app", "Startup toggle", false});
+		CaptureConfig config;
+		config.autoStart = false;
+		auto target = capture(config);
+		int requests = kwin.captureRequests;
+		QTest::qWait(100);
+		QCOMPARE(status(target), QString("idle"));
+		QCOMPARE(kwin.captureRequests, requests);
+		config = target->configuration();
+		config.autoStart = true;
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(status(target), QString("connecting"));
+		config.autoStart = false;
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		QTest::qWait(100);
+		QCOMPARE(status(target), QString("connecting"));
+		QCOMPARE(kwin.captureRequests, requests + 1);
+	}
+
+	void configurationChangesResumeFailedCapture_data()
+	{
+		QTest::addColumn<int>("change");
+		QTest::newRow("selected-window") << 0;
+		QTest::newRow("application") << 1;
+		QTest::newRow("title-filter") << 2;
+		QTest::newRow("title-match") << 3;
+		QTest::newRow("case-sensitive") << 4;
+		QTest::newRow("title-policy") << 5;
+		QTest::newRow("cursor") << 6;
+	}
+
+	void configurationChangesResumeFailedCapture()
+	{
+		QFETCH(int, change);
+		kwin.add({"original", "test.app", "Editor", false});
+		CaptureConfig config;
+		config.autoReconnect = false;
+		config.rule.title = "Editor";
+		auto target = capture(config);
+		QTRY_COMPARE(status(target), QString("failed"));
+		int requests = kwin.captureRequests;
+		kwin.deferCapture = true;
+		config = target->configuration();
+		switch (change) {
+		case 0:
+			config.preferredWindow = "original";
+			break;
+		case 1:
+			kwin.add({"other-app", "other.app", "Editor", false});
+			config.rule.appId = "other.app";
+			QTRY_COMPARE(capture_windows().size(), 2);
+			break;
+		case 2:
+			config.rule.title = "Edit";
+			break;
+		case 3:
+			config.rule.mode = TitleMatch::Exact;
+			break;
+		case 4:
+			config.rule.caseSensitive = true;
+			break;
+		case 5:
+			config.rule.disconnectOnTitleMismatch = true;
+			break;
+		case 6:
+			config.cursor = false;
+			break;
+		}
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(kwin.requestedWindow, change == 1 ? QString("other-app") : QString("original"));
+		QCOMPARE(status(target), QString("connecting"));
+	}
+
+	void disablingAutomaticReconnectCancelsPendingRetry()
+	{
+		kwin.add({"pending-retry", "test.app", "Pending retry", false});
+		auto target = capture();
+		QTRY_COMPARE(status(target), QString("failed"));
+		int requests = kwin.captureRequests;
+		auto config = target->configuration();
+		config.autoReconnect = false;
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		QTest::qWait(100);
+		kwin.deferCapture = true;
+		kwin.focus("pending-retry");
+		QTest::qWait(2200);
+		QCOMPARE(kwin.captureRequests, requests);
+		QCOMPARE(status(target), QString("failed"));
+		config.autoReconnect = true;
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+	}
+
+	void disablingAutomaticReconnectCancelsWaitingAfterLoss()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		kwin.add({"original", "test.app", "Original", false});
+		auto target = capture();
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		kwin.remove("original");
+		QTRY_COMPARE(status(target), QString("waiting"));
+		int requests = kwin.captureRequests;
+		auto config = target->configuration();
+		config.autoReconnect = false;
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		QTRY_COMPARE(status(target), QString("idle"));
+		kwin.add({"returned", "test.app", "Returned", false});
+		QTRY_COMPARE(capture_windows().size(), 1);
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
+		config.autoReconnect = true;
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.captureRequests, requests + 1);
+	}
+
+	void disablingAutomaticReconnectPreservesInitialWait()
+	{
+		auto target = capture();
+		QTRY_COMPARE(status(target), QString("waiting"));
+		int requests = kwin.captureRequests;
+		auto config = target->configuration();
+		config.autoReconnect = false;
+		target->configure(config);
+		queue_capture_action(target, CaptureAction::Configure);
+		kwin.deferCapture = true;
+		kwin.add({"first-target", "test.app", "First target", false});
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(status(target), QString("connecting"));
+	}
+
 	void backendDisconnectRespectsReconnectSetting_data()
 	{
 		QTest::addColumn<bool>("automatic");
@@ -229,11 +390,23 @@ class CaptureControllerTest : public QObject
 		controller.reset();
 	}
 
+	void configurationEditsPreserveManualStop_data()
+	{
+		QTest::addColumn<bool>("startupDisabled");
+		QTest::newRow("api-stop") << false;
+		QTest::newRow("startup-disabled") << true;
+	}
+
 	void configurationEditsPreserveManualStop()
 	{
-		auto target = capture();
-		QTRY_COMPARE(status(target), QString("waiting"));
-		queue_capture_action(target, CaptureAction::Stop);
+		QFETCH(bool, startupDisabled);
+		CaptureConfig initial;
+		initial.autoStart = !startupDisabled;
+		auto target = capture(initial);
+		if (!startupDisabled) {
+			QTRY_COMPARE(status(target), QString("waiting"));
+			queue_capture_action(target, CaptureAction::Stop);
+		}
 		QTRY_COMPARE(status(target), QString("idle"));
 		auto config = target->configuration();
 		config.cursor = false;

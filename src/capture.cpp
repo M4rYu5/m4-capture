@@ -86,10 +86,13 @@ void KWinCapture::action(CaptureAction action)
 	applyConfiguration();
 	switch (action) {
 	case CaptureAction::Stop:
+		manuallyStopped = true;
 		stopWaiting();
 		return;
 	case CaptureAction::Connect:
 		connectionEnabled = true;
+		manuallyStopped = false;
+		reconnectPending = false;
 		retry.stop();
 		stopStream();
 		currentWindowUuid.clear();
@@ -114,7 +117,29 @@ void KWinCapture::applyConfiguration()
 	}
 	if (!configured) {
 		connectionEnabled = next.autoStart;
+		manuallyStopped = !next.autoStart;
 		configured = true;
+	} else {
+		if (config.autoReconnect && !next.autoReconnect && reconnectPending) {
+			connectionEnabled = false;
+			reconnectPending = false;
+			retry.stop();
+			if (state->diagnostics().status == CaptureStatus::Waiting)
+				status(CaptureStatus::Idle);
+		}
+		bool targetChosen =
+		    (!next.preferredWindow.isEmpty() && next.preferredWindow != config.preferredWindow) ||
+		    (!next.rule.appId.isEmpty() && next.rule.appId != config.rule.appId);
+		bool startEnabled =
+		    (!config.autoStart && next.autoStart) || (!config.autoReconnect && next.autoReconnect);
+		bool captureEdited = selectTarget || restart ||
+				     next.rule.disconnectOnTitleMismatch != config.rule.disconnectOnTitleMismatch;
+		if (targetChosen || startEnabled || (!manuallyStopped && captureEdited)) {
+			connectionEnabled = true;
+			manuallyStopped = false;
+			reconnectPending = false;
+			retry.stop();
+		}
 	}
 	if (!config.raiseOnFocus && next.raiseOnFocus)
 		wasFocused = false;
@@ -134,6 +159,7 @@ void KWinCapture::applyConfiguration()
 void KWinCapture::stopWaiting()
 {
 	connectionEnabled = false;
+	reconnectPending = false;
 	retry.stop();
 	stopStream();
 	status(CaptureStatus::Idle);
@@ -194,6 +220,7 @@ void KWinCapture::reconcile()
 			return;
 		}
 		stopStream();
+		reconnectPending = true;
 	}
 	if (match.isEmpty()) {
 		currentWindowUuid.clear();
@@ -216,6 +243,7 @@ void KWinCapture::reconcile()
 
 void KWinCapture::startStream()
 {
+	reconnectPending = false;
 	status(CaptureStatus::Connecting);
 	stream.reset(backend->capture(currentWindowUuid, config.cursor, this));
 	if (!stream) {
@@ -288,7 +316,8 @@ void KWinCapture::failed(const QString &error)
 	if (state->callbacks.error)
 		state->callbacks.error(error);
 	persist();
-	if (config.autoReconnect && connectionEnabled)
+	reconnectPending = config.autoReconnect && connectionEnabled;
+	if (reconnectPending)
 		retry.start();
 	else
 		connectionEnabled = false;

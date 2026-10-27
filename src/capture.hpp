@@ -100,10 +100,14 @@ class KWinCapture : public QObject
 	QString currentWindowUuid;
 	// Incremented before teardown so callbacks from older attempts are ignored.
 	uint64_t generation = 0;
-	// Startup settings arm capture only once; subsequent edits preserve manual stops.
+	// Startup settings are applied once; explicit start/target edits can rearm capture.
 	bool configured = false;
 	// User intent is separate from stream status: waiting/failed/paused may stay armed.
 	bool connectionEnabled = false;
+	// Preserve an API Stop or disabled startup through unrelated settings edits.
+	bool manuallyStopped = false;
+	// Distinguish retrying a lost stream from waiting for the first target.
+	bool reconnectPending = false;
 	bool wasFocused = false;
 	void applyConfiguration();
 	void stopWaiting();
