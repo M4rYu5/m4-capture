@@ -131,11 +131,8 @@ class CaptureTest : public QObject
 		OBSSignal updateSignal(handler, "update_properties", updated, &updates);
 		QTRY_COMPARE(status(target), QString("connecting"));
 		auto props = obs_source_properties(target);
-		QVERIFY(obs_property_enabled(obs_properties_get(props, "connect")));
-		QCOMPARE(QString(obs_property_long_description(obs_properties_get(props, "status"))),
-			 QString("Status.connecting"));
 		int requests = kwin.captureRequests;
-		QVERIFY(!obs_property_button_clicked(obs_properties_get(props, "connect"), target));
+		action(target, "connect");
 		QTest::qWait(100);
 		QCOMPARE(kwin.captureRequests, requests);
 		obs_properties_destroy(props);
@@ -143,9 +140,6 @@ class CaptureTest : public QObject
 		QTRY_COMPARE(status(target), QString("idle"));
 		QCOMPARE(updates, 0);
 		props = obs_source_properties(target);
-		QVERIFY(obs_property_enabled(obs_properties_get(props, "connect")));
-		QCOMPARE(QString(obs_property_long_description(obs_properties_get(props, "status"))),
-			 QString("Status.idle"));
 		QVERIFY(!obs_property_button_clicked(obs_properties_get(props, "refresh_windows"), target));
 		QCOMPARE(updates, 1);
 		obs_properties_destroy(props);

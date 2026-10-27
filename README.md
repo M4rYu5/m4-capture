@@ -28,17 +28,16 @@ Properties include:
 | Connect on OBS startup | On by default; wait silently when the application is absent. |
 | Automatically reconnect | On by default; reconnect when a matching window returns. |
 | Move to top when focused | Off by default; raise the source item within its current scene/group. |
-| Connect / retry capture | Start waiting/capture immediately, or retry an error. |
-| Stop capture and waiting | Stay stopped until Connect is clicked, or until the next OBS startup when startup connection is enabled. |
 
 By default, the title filter is used to find a target. Once connected, title and
 focus changes keep the current window selected. Enable **Disconnect when title
 no longer matches** to also enforce the title filter during capture. If the title
 stops matching, another matching window can become the target. Without a matching
 target, capture becomes transparent and waits when automatic reconnection is
-enabled, or stops until Connect is clicked otherwise. A newly opened matching
-window does not take over a capture whose title still matches. If the selected
-window disappears and several windows match the saved rule, capture waits until
+enabled. Otherwise, capture stays stopped until the source is reloaded with startup
+connection enabled. A newly opened matching window does not take over a capture
+whose title still matches. If the selected window disappears and several windows
+match the saved rule, capture waits until
 the rule is narrowed or a target is chosen.
 
 Closing a window or losing its stream clears the video immediately. Disconnected
