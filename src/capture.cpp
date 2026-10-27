@@ -78,68 +78,23 @@ KWinCapture::KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *ba
 
 KWinCapture::~KWinCapture() { stopStream(); }
 
-void KWinCapture::action(CaptureAction action)
+void KWinCapture::update()
 {
 	Q_ASSERT(QThread::currentThread() == thread());
-	if (action == CaptureAction::Connect && state->diagnostics().status == CaptureStatus::Connecting)
-		return;
 	applyConfiguration();
-	switch (action) {
-	case CaptureAction::Stop:
-		manuallyStopped = true;
-		stopWaiting();
-		return;
-	case CaptureAction::Connect:
-		connectionEnabled = true;
-		manuallyStopped = false;
-		reconnectPending = false;
-		retry.stop();
-		stopStream();
-		currentWindowUuid.clear();
-		wasFocused = false;
-		break;
-	case CaptureAction::Configure:
-		break;
-	}
 	reconcile();
 }
 
 void KWinCapture::applyConfiguration()
 {
 	auto next = state->configuration();
-	bool selectTarget = !configured || requiresTargetSelection(next, config);
-	bool restart = !configured || next.cursor != config.cursor;
+	bool selectTarget = requiresTargetSelection(next, config);
+	bool restart = next.cursor != config.cursor;
 	if (selectTarget) {
 		bool ambiguous;
 		auto windows = backend ? backend->windows() : QList<WindowInfo>{};
 		auto match = select_window(windows, next.rule, {}, next.preferredWindow, &ambiguous);
 		restart |= match != currentWindowUuid || !next.rule.error().isEmpty();
-	}
-	if (!configured) {
-		connectionEnabled = next.autoStart;
-		manuallyStopped = !next.autoStart;
-		configured = true;
-	} else {
-		if (config.autoReconnect && !next.autoReconnect && reconnectPending) {
-			connectionEnabled = false;
-			reconnectPending = false;
-			retry.stop();
-			if (state->diagnostics().status == CaptureStatus::Waiting)
-				status(CaptureStatus::Idle);
-		}
-		bool targetChosen =
-		    (!next.preferredWindow.isEmpty() && next.preferredWindow != config.preferredWindow) ||
-		    (!next.rule.appId.isEmpty() && next.rule.appId != config.rule.appId);
-		bool startEnabled =
-		    (!config.autoStart && next.autoStart) || (!config.autoReconnect && next.autoReconnect);
-		bool captureEdited = selectTarget || restart ||
-				     next.rule.disconnectOnTitleMismatch != config.rule.disconnectOnTitleMismatch;
-		if (targetChosen || startEnabled || (!manuallyStopped && captureEdited)) {
-			connectionEnabled = true;
-			manuallyStopped = false;
-			reconnectPending = false;
-			retry.stop();
-		}
 	}
 	if (!config.raiseOnFocus && next.raiseOnFocus)
 		wasFocused = false;
@@ -151,19 +106,7 @@ void KWinCapture::applyConfiguration()
 		if (selectTarget)
 			currentWindowUuid.clear();
 		wasFocused = false;
-		if (!connectionEnabled)
-			status(CaptureStatus::Idle);
 	}
-}
-
-void KWinCapture::stopWaiting()
-{
-	connectionEnabled = false;
-	reconnectPending = false;
-	retry.stop();
-	stopStream();
-	status(CaptureStatus::Idle);
-	persist();
 }
 
 void KWinCapture::stopStream()
@@ -193,8 +136,6 @@ void KWinCapture::reconcile()
 		stopStream();
 		return;
 	}
-	if (!connectionEnabled)
-		return;
 	if (config.rule.appId.isEmpty()) {
 		status(CaptureStatus::Idle, QStringLiteral("Choose a window or enter its application ID."));
 		return;
@@ -214,14 +155,8 @@ void KWinCapture::reconcile()
 	auto windows = backend->windows();
 	bool ambiguous;
 	auto match = select_window(windows, config.rule, currentWindowUuid, config.preferredWindow, &ambiguous);
-	if (stream && match != currentWindowUuid) {
-		if (!config.autoReconnect) {
-			stopWaiting();
-			return;
-		}
+	if (stream && match != currentWindowUuid)
 		stopStream();
-		reconnectPending = true;
-	}
 	if (match.isEmpty()) {
 		currentWindowUuid.clear();
 		wasFocused = false;
@@ -243,7 +178,6 @@ void KWinCapture::reconcile()
 
 void KWinCapture::startStream()
 {
-	reconnectPending = false;
 	status(CaptureStatus::Connecting);
 	stream.reset(backend->capture(currentWindowUuid, config.cursor, this));
 	if (!stream) {
@@ -316,11 +250,7 @@ void KWinCapture::failed(const QString &error)
 	if (state->callbacks.error)
 		state->callbacks.error(error);
 	persist();
-	reconnectPending = config.autoReconnect && connectionEnabled;
-	if (reconnectPending)
-		retry.start();
-	else
-		connectionEnabled = false;
+	retry.start();
 }
 
 void KWinCapture::persist()

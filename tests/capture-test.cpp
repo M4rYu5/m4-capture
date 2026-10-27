@@ -32,18 +32,11 @@ class CaptureTest : public QObject
 		calldata_free(&params);
 		return result;
 	}
-	void action(obs_source_t *source, const char *name)
-	{
-		calldata_t params{};
-		proc_handler_call(obs_source_get_proc_handler(source), name, &params);
-		calldata_free(&params);
-	}
-	obs_source_t *source(const char *name, const char *app = "test.app", bool raise = false, bool automatic = true)
+	obs_source_t *source(const char *name, const char *app = "test.app", bool raise = false)
 	{
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "app_id", app);
 		obs_data_set_bool(settings, "raise_on_focus", raise);
-		obs_data_set_bool(settings, "auto_start", automatic);
 		return obs_source_create("waylandconnect_source", name, settings, nullptr);
 	}
 	QColor renderedPixel(obs_source_t *source)
@@ -132,12 +125,13 @@ class CaptureTest : public QObject
 		QTRY_COMPARE(status(target), QString("connecting"));
 		auto props = obs_source_properties(target);
 		int requests = kwin.captureRequests;
-		action(target, "connect");
+		OBSDataAutoRelease settings = obs_source_get_settings(target);
+		obs_source_update(target, settings);
 		QTest::qWait(100);
 		QCOMPARE(kwin.captureRequests, requests);
 		obs_properties_destroy(props);
-		action(target, "stop");
-		QTRY_COMPARE(status(target), QString("idle"));
+		kwin.remove("pending");
+		QTRY_COMPARE(status(target), QString("waiting"));
 		QCOMPARE(updates, 0);
 		props = obs_source_properties(target);
 		QVERIFY(!obs_property_button_clicked(obs_properties_get(props, "refresh_windows"), target));
@@ -149,11 +143,13 @@ class CaptureTest : public QObject
 	{
 		kwin.add({"pick", "test.app", "Window title", false});
 		QTRY_VERIFY(capture_windows().size() == 1);
-		OBSSourceAutoRelease target = source("Settings", "", true, false);
+		OBSSourceAutoRelease target = source("Settings", "", true);
 		OBSDataAutoRelease settings = obs_source_get_settings(target);
 		auto props = obs_source_properties(target);
 		auto picker = obs_properties_get(props, "selected_window");
 		QVERIFY(picker);
+		QVERIFY(!obs_properties_get(props, "auto_start"));
+		QVERIFY(!obs_properties_get(props, "auto_reconnect"));
 		QVERIFY(obs_properties_get(props, "disconnect_on_title_mismatch"));
 		QVERIFY(!obs_data_get_bool(settings, "disconnect_on_title_mismatch"));
 		obs_data_set_string(settings, "selected_window", "pick");
@@ -171,7 +167,6 @@ class CaptureTest : public QObject
 		QCOMPARE(QString(obs_data_get_string(config, "title_filter")), QString("title"));
 		QVERIFY(obs_data_get_bool(config, "raise_on_focus"));
 		QVERIFY(!obs_data_get_bool(config, "capture_cursor"));
-		QVERIFY(!obs_data_get_bool(config, "auto_start"));
 		QVERIFY(obs_data_get_bool(config, "disconnect_on_title_mismatch"));
 	}
 
@@ -267,67 +262,49 @@ class CaptureTest : public QObject
 		obs_source_update(target, settings);
 		QTRY_COMPARE_WITH_TIMEOUT(kwin.cursorMode, uint32_t(1), 3000);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
-		action(target, "stop");
+		obs_data_set_string(settings, "app_id", "");
+		obs_source_update(target, settings);
 		QTRY_COMPARE(status(target), QString("idle"));
 		QCOMPARE(renderedPixel(target).alpha(), 0);
 	}
 
-	void reenablingAutomaticReconnectResumesCapture_data()
+	void legacyManualSettingsDoNotDisableCaptureOrReconnect()
 	{
-		QTest::addColumn<bool>("windowAlreadyOpen");
-		QTest::newRow("window-already-open") << true;
-		QTest::newRow("window-opens-later") << false;
-	}
-
-	void reenablingAutomaticReconnectResumesCapture()
-	{
-		QFETCH(bool, windowAlreadyOpen);
 		TestVideo video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"original", "test.app", "Original window", false});
-		OBSSourceAutoRelease target = source("Reconnect toggle");
-		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
-		int requests = kwin.captureRequests;
-		OBSDataAutoRelease settings = obs_source_get_settings(target);
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		obs_data_set_bool(settings, "auto_start", false);
 		obs_data_set_bool(settings, "auto_reconnect", false);
-		obs_source_update(target, settings);
-		QTest::qWait(100);
-		QCOMPARE(status(target), QString("capturing"));
-		QCOMPARE(kwin.captureRequests, requests);
+		OBSSourceAutoRelease target =
+		    obs_source_create("waylandconnect_source", "Legacy settings", settings, nullptr);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		kwin.remove("original");
-		QTRY_VERIFY(status(target) == "idle" || status(target) == "failed");
+		QTRY_COMPARE(status(target), QString("waiting"));
 		QCOMPARE(renderedPixel(target).alpha(), 0);
-		if (windowAlreadyOpen) {
-			kwin.add({"reopened", "test.app", "Reopened window", false});
-			QTRY_COMPARE(capture_windows().size(), 1);
-			QTest::qWait(100);
-		}
-		QCOMPARE(kwin.captureRequests, requests);
-		obs_data_set_bool(settings, "auto_reconnect", true);
-		obs_source_update(target, settings);
-		if (!windowAlreadyOpen) {
-			QTRY_COMPARE(status(target), QString("waiting"));
-			kwin.add({"reopened", "test.app", "Reopened window", false});
-		}
+		kwin.add({"reopened", "test.app", "Reopened window", false});
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QCOMPARE(kwin.requestedWindow, QString("reopened"));
-		QCOMPARE(kwin.captureRequests, requests + 1);
 		QCOMPARE(renderedPixel(target).alpha(), 255);
+		OBSDataAutoRelease saved = obs_save_source(target);
+		OBSDataAutoRelease config = obs_data_get_obj(saved, "settings");
+		QVERIFY(!obs_data_has_user_value(config, "auto_start"));
+		QVERIFY(!obs_data_has_user_value(config, "auto_reconnect"));
 	}
 
-	void choosingWindowResumesCaptureAfterAutomaticStop()
+	void choosingWindowWhileWaitingStartsCapture()
 	{
 		TestVideo video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"original", "test.app", "Original", false});
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "app_id", "test.app");
-		obs_data_set_bool(settings, "auto_reconnect", false);
 		OBSSourceAutoRelease target =
 		    obs_source_create("waylandconnect_source", "Select after stop", settings, nullptr);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		kwin.remove("original");
-		QTRY_VERIFY(status(target) == "idle" || status(target) == "failed");
+		QTRY_COMPARE(status(target), QString("waiting"));
 		int requests = kwin.captureRequests;
 		kwin.add({"chosen", "other.app", "Chosen", false});
 		QTRY_COMPARE(capture_windows().size(), 1);
@@ -342,43 +319,16 @@ class CaptureTest : public QObject
 		QCOMPARE(renderedPixel(target).alpha(), 255);
 	}
 
-	void relaxingTitlePolicyResumesStoppedCapture()
-	{
-		TestVideo video;
-		QVERIFY(video.startCapture(kwin));
-		kwin.add({"editor", "test.app", "Editor", false});
-		OBSDataAutoRelease settings = obs_data_create();
-		obs_data_set_string(settings, "app_id", "test.app");
-		obs_data_set_string(settings, "title_filter", "Editor");
-		obs_data_set_bool(settings, "disconnect_on_title_mismatch", true);
-		obs_data_set_bool(settings, "auto_reconnect", false);
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "Relax title policy", settings, nullptr);
-		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
-		kwin.title("editor", "Other title");
-		QTRY_COMPARE(status(target), QString("idle"));
-		int requests = kwin.captureRequests;
-		obs_data_set_bool(settings, "disconnect_on_title_mismatch", false);
-		obs_source_update(target, settings);
-		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
-		QCOMPARE(kwin.captureRequests, requests + 1);
-		QCOMPARE(kwin.requestedWindow, QString("editor"));
-		QCOMPARE(renderedPixel(target).alpha(), 255);
-	}
-
 	void titleMismatchDisconnects_data()
 	{
 		QTest::addColumn<bool>("enabled");
-		QTest::addColumn<bool>("automatic");
-		QTest::newRow("enabled-automatic") << true << true;
-		QTest::newRow("enabled-manual") << true << false;
-		QTest::newRow("enable-during-capture") << false << true;
+		QTest::newRow("enabled") << true;
+		QTest::newRow("enable-during-capture") << false;
 	}
 
 	void titleMismatchDisconnects()
 	{
 		QFETCH(bool, enabled);
-		QFETCH(bool, automatic);
 		TestVideo video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"editor", "test.app", "Other", false});
@@ -387,7 +337,6 @@ class CaptureTest : public QObject
 		obs_data_set_string(settings, "selected_window", "editor");
 		obs_data_set_string(settings, "title_filter", "Editor");
 		obs_data_set_bool(settings, "disconnect_on_title_mismatch", enabled);
-		obs_data_set_bool(settings, "auto_reconnect", automatic);
 		OBSSourceAutoRelease target =
 		    obs_source_create("waylandconnect_source", "Title matching", settings, nullptr);
 		QTRY_COMPARE(status(target), QString("waiting"));
@@ -407,33 +356,20 @@ class CaptureTest : public QObject
 			obs_data_set_bool(settings, "disconnect_on_title_mismatch", true);
 			obs_source_update(target, settings);
 		}
-		QTRY_COMPARE(status(target), automatic ? QString("waiting") : QString("idle"));
+		QTRY_COMPARE(status(target), QString("waiting"));
 		QCOMPARE(renderedPixel(target).alpha(), 0);
 		QCOMPARE(obs_source_get_width(target), uint32_t(160));
 		QCOMPARE(obs_source_get_height(target), uint32_t(90));
 		QCOMPARE(kwin.captureRequests, requests);
 		kwin.title("editor", "Editor");
 		QTRY_VERIFY(capture_windows().front().title == "Editor");
-		if (!automatic) {
-			QCOMPARE(status(target), QString("idle"));
-			QCOMPARE(kwin.captureRequests, requests);
-			action(target, "connect");
-		}
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QCOMPARE(kwin.captureRequests, requests + 1);
 		QCOMPARE(renderedPixel(target).alpha(), 255);
 	}
 
-	void titleMismatchWithAlternateWindow_data()
-	{
-		QTest::addColumn<bool>("automatic");
-		QTest::newRow("automatic") << true;
-		QTest::newRow("manual") << false;
-	}
-
 	void titleMismatchWithAlternateWindow()
 	{
-		QFETCH(bool, automatic);
 		TestVideo video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"editor", "test.app", "Editor", false});
@@ -441,7 +377,6 @@ class CaptureTest : public QObject
 		obs_data_set_string(settings, "app_id", "test.app");
 		obs_data_set_string(settings, "title_filter", "Editor");
 		obs_data_set_bool(settings, "disconnect_on_title_mismatch", true);
-		obs_data_set_bool(settings, "auto_reconnect", automatic);
 		OBSSourceAutoRelease target =
 		    obs_source_create("waylandconnect_source", "Alternate window", settings, nullptr);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
@@ -450,16 +385,6 @@ class CaptureTest : public QObject
 		int requests = kwin.captureRequests;
 		QCOMPARE(kwin.requestedWindow, QString("editor"));
 		kwin.title("editor", "Other");
-		if (!automatic) {
-			QTRY_COMPARE(status(target), QString("idle"));
-			QCOMPARE(renderedPixel(target).alpha(), 0);
-			QCOMPARE(kwin.captureRequests, requests);
-			kwin.focus("other");
-			QTest::qWait(100);
-			QCOMPARE(status(target), QString("idle"));
-			QCOMPARE(kwin.captureRequests, requests);
-			action(target, "connect");
-		}
 		QTRY_COMPARE(kwin.requestedWindow, QString("other"));
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QCOMPARE(kwin.captureRequests, requests + 1);
@@ -588,8 +513,8 @@ class CaptureTest : public QObject
 		window = makeWindow();
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
 		QCOMPARE(renderedPixel(target).alpha(), 255);
-		action(target, "stop");
-		QTRY_COMPARE(status(target), QString("idle"));
+		window.reset();
+		QTRY_VERIFY(status(target) != "capturing");
 	}
 };
 

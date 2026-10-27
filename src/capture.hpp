@@ -18,18 +18,15 @@ class KWinStream;
 class PipeWireCapture;
 enum class PipeWireStatus;
 
-// Idle: stopped or unconfigured; Waiting: armed with no unique target; Connecting:
+// Idle: unconfigured; Waiting: no unique target; Connecting:
 // awaiting frames; Capturing: frames available; Paused: live stream without frames;
 // Failed: unavailable backend or failed attempt (which may have a retry pending).
 enum class CaptureStatus { Idle, Waiting, Connecting, Capturing, Paused, Failed };
-enum class CaptureAction { Configure, Connect, Stop };
 
 struct CaptureConfig {
 	WindowRule rule;
 	QString preferredWindow;
 	bool cursor = true;
-	bool autoStart = true;
-	bool autoReconnect = true;
 	bool raiseOnFocus = false;
 };
 
@@ -59,7 +56,7 @@ class CaptureState
 
       private:
 	friend class KWinCapture;
-	friend void queue_capture_action(const std::shared_ptr<CaptureState> &, CaptureAction);
+	friend void queue_capture_update(const std::shared_ptr<CaptureState> &);
 	friend void release_capture(const std::shared_ptr<CaptureState> &);
 	mutable std::mutex mutex;
 	CaptureConfig config;
@@ -73,7 +70,7 @@ class CaptureState
 
 void initialize_capture();
 void shutdown_capture();
-void queue_capture_action(const std::shared_ptr<CaptureState> &state, CaptureAction action);
+void queue_capture_update(const std::shared_ptr<CaptureState> &state);
 void release_capture(const std::shared_ptr<CaptureState> &state);
 QList<WindowInfo> capture_windows();
 const char *capture_status_name(CaptureStatus status);
@@ -85,12 +82,12 @@ class KWinCapture : public QObject
       public:
 	KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *backend, QObject *parent);
 	~KWinCapture() override;
-	void action(CaptureAction action);
+	void update();
 
       private:
 	std::shared_ptr<CaptureState> state;
 	QPointer<KWinConnection> backend;
-	// Last applied configuration, compared with the latest shared settings on each action.
+	// Last applied configuration, compared with the latest shared settings on each update.
 	CaptureConfig config;
 	std::unique_ptr<KWinStream> stream;
 	std::unique_ptr<PipeWireCapture> pipewire;
@@ -100,17 +97,8 @@ class KWinCapture : public QObject
 	QString currentWindowUuid;
 	// Incremented before teardown so callbacks from older attempts are ignored.
 	uint64_t generation = 0;
-	// Startup settings are applied once; explicit start/target edits can rearm capture.
-	bool configured = false;
-	// User intent is separate from stream status: waiting/failed/paused may stay armed.
-	bool connectionEnabled = false;
-	// Preserve an API Stop or disabled startup through unrelated settings edits.
-	bool manuallyStopped = false;
-	// Distinguish retrying a lost stream from waiting for the first target.
-	bool reconnectPending = false;
 	bool wasFocused = false;
 	void applyConfiguration();
-	void stopWaiting();
 	void reconcile();
 	void startStream();
 	void streamReady(uint64_t attempt, uint32_t node, const QString &serial);

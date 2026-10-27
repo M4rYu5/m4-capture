@@ -10,15 +10,6 @@ struct WaylandSource {
 };
 
 static const char *sourceName(void *) { return obs_module_text("Source.Name"); }
-static void requestConnect(void *data, calldata_t *)
-{
-	queue_capture_action(static_cast<WaylandSource *>(data)->state, CaptureAction::Connect);
-}
-static void requestStop(void *data, calldata_t *)
-{
-	queue_capture_action(static_cast<WaylandSource *>(data)->state, CaptureAction::Stop);
-}
-
 static void getStatus(void *data, calldata_t *result)
 {
 	auto state = static_cast<WaylandSource *>(data)->state;
@@ -31,7 +22,7 @@ static void sourceUpdate(void *opaque, obs_data_t *settings)
 {
 	auto state = static_cast<WaylandSource *>(opaque)->state;
 	state->configure(read_capture_config(settings));
-	queue_capture_action(state, CaptureAction::Configure);
+	queue_capture_update(state);
 }
 
 static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
@@ -41,8 +32,6 @@ static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
 	data->state = create_obs_capture_state(source, settings);
 	sourceUpdate(data, settings);
 	auto handler = obs_source_get_proc_handler(source);
-	proc_handler_add(handler, "void connect()", requestConnect, data);
-	proc_handler_add(handler, "void stop()", requestStop, data);
 	proc_handler_add(handler, "void get_status(out string status, out bool busy)", getStatus, data);
 	return data;
 }
@@ -139,8 +128,6 @@ static obs_properties_t *sourceProperties(void *opaque)
 						  obs_module_text("Source.DisconnectOnTitleMismatch"));
 	setHelpDescription(disconnect, "Source.DisconnectOnTitleMismatch.Help");
 	obs_properties_add_bool(props, "capture_cursor", obs_module_text("Source.Cursor"));
-	obs_properties_add_bool(props, "auto_start", obs_module_text("Source.AutoStart"));
-	obs_properties_add_bool(props, "auto_reconnect", obs_module_text("Source.AutoReconnect"));
 	auto focus = obs_properties_add_bool(props, "raise_on_focus", obs_module_text("Source.RaiseOnFocus"));
 	setHelpDescription(focus, "Source.RaiseOnFocus.Help");
 	return props;

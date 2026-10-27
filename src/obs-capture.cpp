@@ -15,8 +15,6 @@ CaptureConfig read_capture_config(obs_data_t *settings)
 	config.rule.disconnectOnTitleMismatch = obs_data_get_bool(settings, "disconnect_on_title_mismatch");
 	config.preferredWindow = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
 	config.cursor = obs_data_get_bool(settings, "capture_cursor");
-	config.autoStart = obs_data_get_bool(settings, "auto_start");
-	config.autoReconnect = obs_data_get_bool(settings, "auto_reconnect");
 	config.raiseOnFocus = obs_data_get_bool(settings, "raise_on_focus");
 	return config;
 }
@@ -30,8 +28,9 @@ void write_capture_config(obs_data_t *settings, const CaptureConfig &config)
 	obs_data_set_bool(settings, "disconnect_on_title_mismatch", config.rule.disconnectOnTitleMismatch);
 	obs_data_set_string(settings, "selected_window", config.preferredWindow.toUtf8().constData());
 	obs_data_set_bool(settings, "capture_cursor", config.cursor);
-	obs_data_set_bool(settings, "auto_start", config.autoStart);
-	obs_data_set_bool(settings, "auto_reconnect", config.autoReconnect);
+	// Older scenes may have disabled these options; capture is now always automatic.
+	obs_data_erase(settings, "auto_start");
+	obs_data_erase(settings, "auto_reconnect");
 	obs_data_set_bool(settings, "raise_on_focus", config.raiseOnFocus);
 }
 
@@ -49,8 +48,6 @@ void set_capture_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "width", 1280);
 	obs_data_set_default_int(settings, "height", 720);
 	obs_data_set_default_bool(settings, "capture_cursor", defaults.cursor);
-	obs_data_set_default_bool(settings, "auto_start", defaults.autoStart);
-	obs_data_set_default_bool(settings, "auto_reconnect", defaults.autoReconnect);
 	obs_data_set_default_bool(settings, "raise_on_focus", defaults.raiseOnFocus);
 	obs_data_set_default_bool(settings, "disconnect_on_title_mismatch", defaults.rule.disconnectOnTitleMismatch);
 }

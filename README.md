@@ -25,30 +25,24 @@ Properties include:
 | Case sensitive | Off by default. |
 | Disconnect when title no longer matches | Off by default; require the captured window to keep matching the title filter. |
 | Capture cursor | On by default; include the pointer in the video. |
-| Connect on OBS startup | On by default; wait silently when the application is absent. Enabling it also starts capture immediately; disabling it only affects future startups. |
-| Automatically reconnect | On by default; reconnect when a matching window returns. Enabling it resumes capture; disabling it cancels pending retries and waiting after a lost stream. |
 | Move to top when focused | Off by default; raise the source item within its current scene/group. |
 
 By default, the title filter is used to find a target. Once connected, title and
 focus changes keep the current window selected. Enable **Disconnect when title
 no longer matches** to also enforce the title filter during capture. If the title
 stops matching, another matching window can become the target. Without a matching
-target, capture becomes transparent and waits when automatic reconnection is
-enabled. Otherwise, capture stays stopped until you select a target, edit capture
-settings, or enable startup capture or reconnection. A newly opened matching window
-does not take over a capture whose title still matches. If the selected window
-disappears and several windows match the saved rule, capture waits until the rule
-is narrowed or a target is chosen.
+target, capture becomes transparent and waits for a matching window. A newly
+opened matching window does not take over a capture whose title still matches.
+If the selected window disappears and several windows match the saved rule,
+capture waits until the rule is narrowed or a target is chosen.
 
 Closing a window or losing its stream clears the video immediately. Disconnected
 sources stay transparent and keep their last dimensions. A source with no captured
-frames yet uses a 1280×720 default. Stream errors retry with a short delay when
-automatic reconnection is enabled; normal waiting reacts to KWin window events.
-Selecting a window or changing the application ID starts capture even when startup
-connection is disabled. After an automatic stop or failure, changing the matching
-rules, title policy, or cursor setting makes a fresh capture attempt. Unrelated
-settings changes do not resume capture. Waiting for the first window at startup
-still works with automatic reconnection disabled.
+frames yet uses a 1280×720 default. Capture starts automatically whenever a unique
+matching window is available, including after OBS startup or a window reopening.
+Stream errors retry after two seconds; normal waiting reacts to KWin window events
+without repeated capture requests. Old saved startup/reconnection switches are
+ignored and removed when the source is saved.
 
 ## Move to top when focused
 
@@ -173,28 +167,23 @@ The frame buffer has its own synchronization; controller ownership and callbacks
 stay on the Qt UI thread. Callbacks hold weak OBS references, so they do not keep
 removed sources alive.
 
-The controller keeps user intent (`connectionEnabled`) separate from stream status:
+The controller always captures or waits for a matching target while its source exists:
 
 | Event | Transition |
 | --- | --- |
-| Startup with automatic start, or Connect | Wait for a unique target, then connect. |
+| Startup | Wait for a unique target, then connect. |
 | First frame | Connecting → Capturing. |
 | Stream pauses | Capturing → Paused; clear video and retain the selected window. |
 | Frames resume | Paused → Capturing without choosing another target. |
-| Target disappears, or an enforced title filter fails | Wait/reconnect when enabled; otherwise stop. |
-| Stream failure | Failed; retry after a delay when reconnection is enabled. |
-| Startup capture or automatic reconnection is switched on | Resume waiting/capture immediately. |
+| Target disappears, or an enforced title filter fails | Clear video and wait for a matching target. |
+| Stream failure | Failed; retry after two seconds. |
 | A window or application is selected | Start a new capture attempt. |
-| Capture settings are edited after an automatic stop | Retry using the updated settings. |
-| Automatic reconnection is switched off | Cancel pending retries or waiting after a lost stream; keep any live stream and initial startup wait. |
-| Stop | Any status → Idle; disarm waiting and retries. |
+| Application ID is cleared | Idle; clear video until a target is configured. |
+| Source is removed | Release capture and cancel retries. |
 
-Unrelated configuration edits preserve an API Stop or disabled startup. Selecting
-a target or explicitly enabling startup/reconnection rearms capture. Matching,
-title-policy, and cursor edits can recover an automatically stopped capture.
+There is no manual start/stop state or separate startup/reconnection policy.
 Cursor changes restart the stream while retaining the current window; target-rule
-edits re-evaluate selection. Pending reconnection is tracked separately from the
-initial wait for a target.
+edits re-evaluate selection. Unrelated settings edits leave a live stream intact.
 Old stream callbacks are ignored using an attempt generation incremented before teardown.
 
 Video uses a shared-memory CPU copy path; GPU-only buffers and HDR are unsupported.

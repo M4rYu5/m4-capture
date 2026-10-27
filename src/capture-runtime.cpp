@@ -46,19 +46,19 @@ QList<WindowInfo> capture_windows()
 	return windowsSnapshot;
 }
 
-void queue_capture_action(const std::shared_ptr<CaptureState> &state, CaptureAction action)
+void queue_capture_update(const std::shared_ptr<CaptureState> &state)
 {
 	if (!captureContext || !state->isAlive())
 		return;
 	QMetaObject::invokeMethod(
 	    captureContext,
-	    [state, action] {
+	    [state] {
 		    if (!state->isAlive())
 			    return;
 		    ensureConnection();
 		    if (!state->controller)
 			    new KWinCapture(state, connection, captureContext);
-		    state->controller->action(action);
+		    state->controller->update();
 	    },
 	    Qt::QueuedConnection);
 }
