@@ -16,7 +16,7 @@ class FrameBuffer
 	enum class Mode { None, Cpu, DmaBuf };
 
 	explicit FrameBuffer(uint32_t width = 1280, uint32_t height = 720);
-	// Returns true for the first frame after clear(), or a size change.
+	// Returns true for the first frame after clear(), or a size/capture-mode change.
 	bool publish(VideoFrame &frame);
 	// Unchanged means the consumer can keep using its previously uploaded texture.
 	Update take(VideoFrame &frame);

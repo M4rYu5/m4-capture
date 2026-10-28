@@ -46,7 +46,6 @@ class PipeWireCapture
 	bool stopping = false;
 	bool failedOnce = false;
 	bool cpuOnly = false;
-	bool dmaBuf = false;
 
 	std::vector<const spa_pod *> buildFormats(spa_pod_builder &builder);
 	void fallbackToCpu();

@@ -227,9 +227,8 @@ void PipeWireCapture::formatChanged(const spa_pod *param)
 	uint8_t storage[1024];
 	spa_pod_builder builder;
 	spa_pod_builder_init(&builder, storage, sizeof(storage));
-	dmaBuf = gpu && !cpuOnly && spa_pod_find_prop(param, nullptr, SPA_FORMAT_VIDEO_modifier);
+	bool dmaBuf = gpu && !cpuOnly && spa_pod_find_prop(param, nullptr, SPA_FORMAT_VIDEO_modifier);
 	std::vector<const spa_pod *> params;
-#if PW_CHECK_VERSION(1, 2, 0)
 	if (dmaBuf && gpu->explicitSync) {
 		spa_pod_frame object;
 		spa_pod_builder_push_object(&builder, &object, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers);
@@ -242,7 +241,6 @@ void PipeWireCapture::formatChanged(const spa_pod *param)
 					       SPA_POD_Id(SPA_META_SyncTimeline), SPA_PARAM_META_size,
 					       SPA_POD_Int(sizeof(spa_meta_sync_timeline)))));
 	}
-#endif
 	params.push_back(static_cast<spa_pod *>(spa_pod_builder_add_object(
 	    &builder, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers, SPA_PARAM_BUFFERS_dataType,
 	    SPA_POD_CHOICE_FLAGS_Int(dmaBuf ? (1 << SPA_DATA_DmaBuf)
@@ -268,7 +266,6 @@ void PipeWireCapture::onRemoveBuffer(void *data, pw_buffer *buffer)
 
 void PipeWireCapture::process()
 {
-	bool notify = false;
 	pw_buffer *latest = nullptr;
 	while (auto next = pw_stream_dequeue_buffer(stream)) {
 		if (latest) {
@@ -280,48 +277,49 @@ void PipeWireCapture::process()
 	}
 	if (!latest)
 		return;
-	bool fallback = false;
-	if (frames->isEnabled() && !failedOnce && format.size.width && format.size.height) {
-		bool isDmaBuf = latest->buffer->n_datas && latest->buffer->datas[0].type == SPA_DATA_DmaBuf;
-		FrameResult result;
-		if (isDmaBuf && gpu) {
-			if (cpuOnly) {
-				gpu->discard(*latest->buffer);
-				result = FrameResult::Empty;
-			} else {
-				result = gpu->copy(*latest->buffer, format, scratch);
-			}
-		} else {
-			result = copy_video_frame(*latest->buffer, format, scratch);
-		}
-		if (isDmaBuf && result != FrameResult::Ready && result != FrameResult::Empty) {
-			fallback = true;
-		} else
-			switch (result) {
-			case FrameResult::Ready:
-				notify = frames->publish(scratch);
-				break;
-			case FrameResult::Empty:
-				// Metadata-only or corrupted buffers do not replace a valid frame.
-				break;
-			case FrameResult::UnsupportedFormat:
-				fail(QStringLiteral("The compositor supplied an unsupported video format."));
-				break;
-			case FrameResult::UnmappedBuffer:
-				fail(QStringLiteral("The compositor did not provide mapped video buffers."));
-				break;
-			case FrameResult::InvalidLayout:
-				fail(QStringLiteral("PipeWire supplied an invalid video buffer layout."));
-				break;
-			}
-	} else if (gpu) {
-		gpu->discard(*latest->buffer);
+	const auto &buffer = *latest->buffer;
+	if (!frames->isEnabled() || failedOnce || !format.size.width || !format.size.height) {
+		if (gpu)
+			gpu->discard(buffer);
+		pw_stream_queue_buffer(stream, latest);
+		return;
 	}
-	pw_stream_queue_buffer(stream, latest);
-	if (fallback) {
+	bool isDmaBuf = buffer.n_datas && buffer.datas[0].type == SPA_DATA_DmaBuf;
+	FrameResult result;
+	if (isDmaBuf && gpu) {
+		if (cpuOnly) {
+			gpu->discard(buffer);
+			result = FrameResult::Empty;
+		} else {
+			result = gpu->copy(buffer, format, scratch);
+		}
+	} else {
+		result = copy_video_frame(buffer, format, scratch);
+	}
+	if (isDmaBuf && result != FrameResult::Ready && result != FrameResult::Empty) {
+		pw_stream_queue_buffer(stream, latest);
 		fallbackToCpu();
 		return;
 	}
+	bool notify = false;
+	switch (result) {
+	case FrameResult::Ready:
+		notify = frames->publish(scratch);
+		break;
+	case FrameResult::Empty:
+		// Metadata-only or corrupted buffers do not replace a valid frame.
+		break;
+	case FrameResult::UnsupportedFormat:
+		fail(QStringLiteral("The compositor supplied an unsupported video format."));
+		break;
+	case FrameResult::UnmappedBuffer:
+		fail(QStringLiteral("The compositor did not provide mapped video buffers."));
+		break;
+	case FrameResult::InvalidLayout:
+		fail(QStringLiteral("PipeWire supplied an invalid video buffer layout."));
+		break;
+	}
+	pw_stream_queue_buffer(stream, latest);
 	if (notify)
 		changed(PipeWireStatus::Streaming);
 }

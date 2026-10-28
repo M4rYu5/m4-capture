@@ -58,18 +58,19 @@ FrameResult copy_video_frame(const spa_buffer &buffer, const spa_video_info_raw 
 	int64_t stride = plane.chunk->stride ? plane.chunk->stride : int64_t(format.size.width) * 4;
 	if (!validLayout(plane, format, stride))
 		return FrameResult::InvalidLayout;
-	auto [x, y, width, height, rotation, flip] = video_layout(buffer, format);
-	output.width = (rotation & 1) ? height : width;
-	output.height = (rotation & 1) ? width : height;
+	auto layout = video_layout(buffer, format);
+	output.width = layout.outputWidth();
+	output.height = layout.outputHeight();
 	output.gpu.reset();
-	output.layout = {0, 0, width, height, rotation, flip};
+	output.layout = {0, 0, layout.width, layout.height, layout.rotation, layout.flip};
 	output.format = format.format;
-	output.pixels.resize(size_t(width) * height * 4);
+	size_t rowBytes = size_t(layout.width) * 4;
+	output.pixels.resize(rowBytes * layout.height);
 	auto bytes = static_cast<const uint8_t *>(plane.data);
-	for (uint32_t row = 0; row < height; ++row) {
-		auto input = bytes + plane.chunk->offset + int64_t(y + row) * stride + x * 4;
-		auto destination = output.pixels.data() + size_t(row) * width * 4;
-		std::memcpy(destination, input, size_t(width) * 4);
+	for (uint32_t row = 0; row < layout.height; ++row) {
+		auto input = bytes + plane.chunk->offset + int64_t(layout.y + row) * stride + layout.x * 4;
+		auto destination = output.pixels.data() + row * rowBytes;
+		std::memcpy(destination, input, rowBytes);
 	}
 	return FrameResult::Ready;
 }

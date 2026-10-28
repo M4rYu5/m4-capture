@@ -54,7 +54,6 @@ class BufferRelease
 	bool used = false;
 	explicit BufferRelease(const spa_buffer &buffer)
 	{
-#if PW_CHECK_VERSION(1, 2, 0)
 		timeline = static_cast<spa_meta_sync_timeline *>(
 		    spa_buffer_find_meta_data(&buffer, SPA_META_SyncTimeline, sizeof(spa_meta_sync_timeline)));
 		if (timeline && buffer.n_datas >= 3 && buffer.datas[buffer.n_datas - 2].type == SPA_DATA_SyncObj &&
@@ -64,9 +63,6 @@ class BufferRelease
 		} else {
 			timeline = nullptr;
 		}
-#else
-		(void)buffer;
-#endif
 	}
 	bool acquire()
 	{
@@ -264,9 +260,7 @@ std::shared_ptr<DmaBufCapture> create_obs_dmabuf_capture()
 			capture->formats.push_back(std::move(entry));
 	}
 	bfree(formats);
-#if PW_CHECK_VERSION(1, 2, 0)
 	capture->explicitSync = gs_query_sync_capabilities();
-#endif
 	return capture->formats.empty() ? nullptr : capture;
 }
 

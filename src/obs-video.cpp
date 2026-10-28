@@ -50,7 +50,7 @@ ObsVideoRenderer::~ObsVideoRenderer()
 void ObsVideoRenderer::render(const VideoFrame &frame, bool updated)
 {
 	auto image = obs_frame_texture(frame);
-	auto layout = frame.gpu ? VideoLayout{0, 0, frame.width, frame.height} : frame.layout;
+	const auto &layout = frame.layout;
 	bool opaque = false;
 	if (!image) {
 		bool rgb = frame.format == SPA_VIDEO_FORMAT_RGBA || frame.format == SPA_VIDEO_FORMAT_RGBx;
