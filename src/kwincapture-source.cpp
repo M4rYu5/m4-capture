@@ -101,6 +101,7 @@ static obs_properties_t *sourceProperties(void *opaque)
 	}
 	auto picker = obs_properties_add_list(props, "selected_window", obs_module_text("Source.Window"),
 					      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	setHelpDescription(picker, "Source.Window.Help");
 	obs_property_list_add_string(picker, obs_module_text("Source.SelectWindow"), "");
 	bool found = false;
 	for (const auto &window : capture_windows()) {
