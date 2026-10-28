@@ -133,6 +133,40 @@ class VideoFrameTest : public QObject
 		QCOMPARE(markers(output), QByteArray::fromHex("010203040506"));
 	}
 
+	void opaqueCroppedRows_data()
+	{
+		QTest::addColumn<bool>("bottomUp");
+		QTest::newRow("positive-stride") << false;
+		QTest::newRow("negative-stride") << true;
+	}
+
+	void opaqueCroppedRows()
+	{
+		QFETCH(bool, bottomUp);
+		FrameFixture input;
+		input.format.format = SPA_VIDEO_FORMAT_BGRx;
+		// Offset each row by one byte to exercise unaligned, padded input.
+		std::vector<uint8_t> padded(30, 0);
+		std::copy_n(input.bytes.data(), 12, padded.data() + 1);
+		std::copy_n(input.bytes.data() + 12, 12, padded.data() + 17);
+		input.plane.data = padded.data();
+		input.plane.maxsize = padded.size();
+		input.chunk.offset = bottomUp ? 17 : 1;
+		input.chunk.stride = bottomUp ? -16 : 16;
+		input.chunk.size = 28;
+		input.crop.region = {{1, 0}, {2, 2}};
+		VideoFrame output;
+		QCOMPARE(convert_video_frame(input.buffer, input.format, output), FrameResult::Ready);
+		QCOMPARE(markers(output), QByteArray::fromHex(bottomUp ? "05060203" : "02030506"));
+		QCOMPARE(output.width, 2u);
+		QCOMPARE(output.height, 2u);
+		for (size_t i = 0; i < output.pixels.size(); i += 4) {
+			QCOMPARE(output.pixels[i + 1], uint8_t(20));
+			QCOMPARE(output.pixels[i + 2], uint8_t(30));
+			QCOMPARE(output.pixels[i + 3], uint8_t(255));
+		}
+	}
+
 	void invalidAndEmptyBuffers()
 	{
 		FrameFixture input;

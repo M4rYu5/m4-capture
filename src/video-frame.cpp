@@ -62,8 +62,12 @@ FrameResult convert_video_frame(const spa_buffer &buffer, const spa_video_info_r
 	auto bytes = static_cast<const uint8_t *>(plane.data);
 	for (uint32_t row = 0; row < height; ++row) {
 		auto input = bytes + plane.chunk->offset + int64_t(y + row) * stride + x * 4;
-		if (!rotation && !flip && !rgb && !opaque) {
-			std::memcpy(output.pixels.data() + size_t(row) * width * 4, input, size_t(width) * 4);
+		if (!rotation && !flip && !rgb) {
+			auto destination = output.pixels.data() + size_t(row) * width * 4;
+			std::memcpy(destination, input, size_t(width) * 4);
+			if (opaque)
+				for (size_t alpha = 3; alpha < size_t(width) * 4; alpha += 4)
+					destination[alpha] = 255;
 			continue;
 		}
 		for (uint32_t column = 0; column < width; ++column) {
