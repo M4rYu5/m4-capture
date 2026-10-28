@@ -168,11 +168,15 @@ static void sourceRender(void *opaque, gs_effect_t *)
 
 	auto effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	bool previous = gs_framebuffer_srgb_enabled();
+	// KWin pixels are premultiplied; do not apply alpha to their colors again.
+	gs_blend_state_push();
+	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
 	gs_enable_framebuffer_srgb(true);
 	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"), data->texture);
 	while (gs_effect_loop(effect, "Draw"))
 		gs_draw_sprite(data->texture, 0, width, height);
 	gs_enable_framebuffer_srgb(previous);
+	gs_blend_state_pop();
 }
 
 void register_kwincapture_source()

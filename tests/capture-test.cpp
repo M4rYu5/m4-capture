@@ -229,6 +229,33 @@ class CaptureTest : public QObject
 		QCOMPARE(obs_sceneitem_get_order_position(item), 0);
 	}
 
+	void premultipliedAlphaSurvivesSceneRendering_data()
+	{
+		QTest::addColumn<uint32_t>("alpha");
+		QTest::newRow("transparent") << 0u;
+		QTest::newRow("quarter-opacity") << 64u;
+		QTest::newRow("half-opacity") << 128u;
+		QTest::newRow("opaque") << 255u;
+	}
+
+	void premultipliedAlphaSurvivesSceneRendering()
+	{
+		QFETCH(uint32_t, alpha);
+		// KWin supplies premultiplied pixels: red and alpha have the same value.
+		TestVideo video((alpha << 24) | (alpha << 16));
+		QVERIFY(video.startCapture(kwin));
+		kwin.add({"translucent", "test.app", "Translucent window", false});
+		OBSSourceAutoRelease target = source("Alpha capture");
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		OBSSceneAutoRelease scene = obs_scene_create("Alpha scene");
+		obs_scene_add(scene, target);
+		auto pixel = renderedPixel(obs_scene_get_source(scene));
+		QCOMPARE(pixel.red(), int(alpha));
+		QCOMPARE(pixel.green(), 0);
+		QCOMPARE(pixel.blue(), 0);
+		QCOMPARE(pixel.alpha(), int(alpha));
+	}
+
 	void videoReconnectsAndKeepsSizeAndCursorChoice()
 	{
 		TestVideo video;

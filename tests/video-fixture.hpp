@@ -16,6 +16,7 @@
 class TestVideo
 {
       public:
+	explicit TestVideo(uint32_t bgra = 0xffe08020u) : bgra(bgra) {}
 	~TestVideo();
 	bool start();
 	bool startProducer();
@@ -29,6 +30,7 @@ class TestVideo
 	QString socketPath() const;
 
       private:
+	const uint32_t bgra;
 	QTemporaryDir directory;
 	QProcess daemon;
 	const QByteArray originalRemote = qgetenv("PIPEWIRE_REMOTE");

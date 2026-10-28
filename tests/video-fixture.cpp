@@ -254,7 +254,7 @@ void TestVideo::process(void *data)
 	auto &plane = buffer->buffer->datas[0];
 	if (plane.data && plane.maxsize >= 160 * 90 * 4) {
 		auto pixels = static_cast<uint32_t *>(plane.data);
-		std::fill(pixels, pixels + 160 * 90, 0xffe08020u);
+		std::fill(pixels, pixels + 160 * 90, self->bgra);
 		plane.chunk->offset = 0;
 		plane.chunk->stride = 160 * 4;
 		plane.chunk->size = 160 * 90 * 4;
