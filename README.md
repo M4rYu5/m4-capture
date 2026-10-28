@@ -231,9 +231,22 @@ python3 scripts/benchmark-capture.py --runs 3
 
 Build the Release integration tests first. The script compares DMA-BUF and
 forced CPU fallback, saves raw logs and JSON under `build-release/`, and reports
-median process CPU usage and received frame rates. `--baseline /path/to/binary`
+median process CPU usage and prepared frame rates. The benchmark defaults to a
+60 fps OBS output clock; `KWINCAPTURE_TEST_FPS_NUM` and `KWINCAPTURE_TEST_FPS_DEN`
+override it. Set `KWINCAPTURE_BENCHMARK_ANIMATION_MS=2` to update the captured
+window independently of the 16 ms source-draw timer and profile a faster producer.
+`--baseline /path/to/binary`
 also measures a preserved pre-change benchmark executable. See
 [the performance notes](docs/capture-performance.md) for measured results and scope.
+
+For a short frame-rate diagnostic across an OBS output-rate change, run:
+
+```sh
+QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build-release/kwincapture-tests liveFrameRateProfile
+```
+
+This logs prepared frames/s at two output rates without enforcing a capture FPS
+limit. Set `KWINCAPTURE_FORCE_CPU=1` to profile CPU fallback.
 
 ## License
 

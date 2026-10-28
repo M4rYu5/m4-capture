@@ -11,7 +11,7 @@ import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=Path, default=Path("build-release/kwincapture-tests"))
-parser.add_argument("--baseline", type=Path, help="Preserved CPU-only benchmark executable")
+parser.add_argument("--baseline", type=Path, help="Preserved pre-change benchmark executable")
 parser.add_argument("--runs", type=int, default=3)
 parser.add_argument("--output", type=Path, default=Path("build-release/capture-performance.json"))
 args = parser.parse_args()

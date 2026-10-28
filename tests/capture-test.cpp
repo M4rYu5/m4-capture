@@ -742,6 +742,58 @@ class CaptureTest : public QObject
 		QCOMPARE(reject->rejected.load(), rejected);
 	}
 
+	void liveFrameRateProfile()
+	{
+		if (!live)
+			QSKIP("Opt-in test captures only its own temporary animated window.");
+		QWidget window;
+		window.setWindowTitle("KWinCapture frame rate check");
+		window.setWindowFlags(Qt::FramelessWindowHint);
+		window.setFixedSize(160, 90);
+		window.show();
+		QTimer animate;
+		animate.setTimerType(Qt::PreciseTimer);
+		int tick = 0;
+		connect(&animate, &QTimer::timeout, &window, [&] {
+			window.setStyleSheet(QString("background-color: rgb(%1, 80, 40)").arg(80 + (++tick % 120)));
+		});
+		animate.start(2);
+		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
+		OBSSourceAutoRelease target = source("Frame rate target", "kwincapture-test");
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
+		auto frames = [&] {
+			calldata_t data{};
+			proc_handler_call(obs_source_get_proc_handler(target), "get_status", &data);
+			auto count = calldata_int(&data, "frames");
+			calldata_free(&data);
+			return count;
+		};
+		obs_video_info original{};
+		QVERIFY(obs_get_video_info(&original));
+		auto restore = qScopeGuard([&] { obs_reset_video(&original); });
+		for (bool changeRate : {false, true}) {
+			obs_video_info video{};
+			QVERIFY(obs_get_video_info(&video));
+			if (changeRate) {
+				video.fps_num = video.fps_num > 30 * video.fps_den ? 30 : 60;
+				video.fps_den = 1;
+				QCOMPARE(obs_reset_video(&video), OBS_VIDEO_SUCCESS);
+			}
+			QTest::qWait(500);
+			QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+			auto start = frames();
+			QElapsedTimer elapsed;
+			elapsed.start();
+			QTest::qWait(1500);
+			const double seconds = elapsed.nsecsElapsed() / 1e9;
+			const auto prepared = frames() - start;
+			qInfo("FRAME_RATE_PROFILE prepared=%lld seconds=%.3f output=%u/%u fps=%.2f",
+			      (long long)prepared, seconds, video.fps_num, video.fps_den, prepared / seconds);
+			QVERIFY(prepared > 0);
+			QCOMPARE(renderedPixel(target).alpha(), 255);
+		}
+	}
+
 	void capturePerformance()
 	{
 		if (!live || !qEnvironmentVariableIsSet("KWINCAPTURE_BENCHMARK_WIDTH"))
@@ -773,12 +825,24 @@ class CaptureTest : public QObject
 		obs_enter_graphics();
 		auto render = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 		obs_leave_graphics();
+		QTimer animate;
+		const int animationInterval = qEnvironmentVariableIntValue("KWINCAPTURE_BENCHMARK_ANIMATION_MS");
+		if (animationInterval > 0) {
+			animate.setTimerType(Qt::PreciseTimer);
+			connect(&animate, &QTimer::timeout, &window, [&] {
+				++window.tick;
+				window.update();
+			});
+			animate.start(animationInterval);
+		}
 		QTimer timer;
 		timer.setTimerType(Qt::PreciseTimer);
 		int draws = 0;
 		connect(&timer, &QTimer::timeout, this, [&] {
-			++window.tick;
-			window.update();
+			if (!animate.isActive()) {
+				++window.tick;
+				window.update();
+			}
 			obs_enter_graphics();
 			gs_texrender_reset(render);
 			if (gs_texrender_begin(render, width, height)) {
@@ -843,8 +907,12 @@ int main(int argc, char **argv)
 		return 1;
 	obs_video_info video{};
 	video.graphics_module = "libobs-opengl";
-	video.fps_num = 30;
-	video.fps_den = 1;
+	video.fps_num = qEnvironmentVariableIntValue("KWINCAPTURE_TEST_FPS_NUM");
+	video.fps_den = qEnvironmentVariableIntValue("KWINCAPTURE_TEST_FPS_DEN");
+	if (!video.fps_num)
+		video.fps_num = qEnvironmentVariableIsSet("KWINCAPTURE_BENCHMARK_WIDTH") ? 60 : 30;
+	if (!video.fps_den)
+		video.fps_den = 1;
 	video.base_width = video.output_width = 320;
 	video.base_height = video.output_height = 240;
 	video.output_format = VIDEO_FORMAT_RGBA;
