@@ -5,7 +5,6 @@
 #include <QtGlobal>
 #include <drm_fourcc.h>
 #include <obs-module.h>
-#include <pipewire/pipewire.h>
 #include <spa/buffer/meta.h>
 
 #include <algorithm>

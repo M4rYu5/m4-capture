@@ -52,6 +52,14 @@ class CaptureTest : public QObject
 		calldata_free(&params);
 		return result;
 	}
+	int64_t frameCount(obs_source_t *source)
+	{
+		calldata_t params{};
+		proc_handler_call(obs_source_get_proc_handler(source), "get_status", &params);
+		auto result = calldata_int(&params, "frames");
+		calldata_free(&params);
+		return result;
+	}
 	obs_source_t *source(const char *name, const char *app = "test.app", bool raise = false)
 	{
 		OBSDataAutoRelease settings = obs_data_create();
@@ -1173,13 +1181,6 @@ class CaptureTest : public QObject
 		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
 		OBSSourceAutoRelease target = source("Frame rate target", "kwincapture-test");
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
-		auto frames = [&] {
-			calldata_t data{};
-			proc_handler_call(obs_source_get_proc_handler(target), "get_status", &data);
-			auto count = calldata_int(&data, "frames");
-			calldata_free(&data);
-			return count;
-		};
 		obs_video_info original{};
 		QVERIFY(obs_get_video_info(&original));
 		auto restore = qScopeGuard([&] { obs_reset_video(&original); });
@@ -1193,12 +1194,12 @@ class CaptureTest : public QObject
 			}
 			QTest::qWait(500);
 			QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
-			auto start = frames();
+			auto start = frameCount(target);
 			QElapsedTimer elapsed;
 			elapsed.start();
 			QTest::qWait(1500);
 			const double seconds = elapsed.nsecsElapsed() / 1e9;
-			const auto prepared = frames() - start;
+			const auto prepared = frameCount(target) - start;
 			qInfo("FRAME_RATE_PROFILE prepared=%lld seconds=%.3f output=%u/%u fps=%.2f",
 			      (long long)prepared, seconds, video.fps_num, video.fps_den, prepared / seconds);
 			QVERIFY(prepared > 0);
@@ -1237,6 +1238,12 @@ class CaptureTest : public QObject
 		obs_enter_graphics();
 		auto render = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 		obs_leave_graphics();
+		auto destroyRender = qScopeGuard([&] {
+			obs_enter_graphics();
+			gs_texrender_destroy(render);
+			obs_leave_graphics();
+		});
+		QVERIFY(render);
 		QTimer animate;
 		const int animationInterval = qEnvironmentVariableIntValue("KWINCAPTURE_BENCHMARK_ANIMATION_MS");
 		if (animationInterval > 0) {
@@ -1270,14 +1277,7 @@ class CaptureTest : public QObject
 		});
 		timer.start(16);
 		QTest::qWait(2000);
-		auto frames = [&] {
-			calldata_t data{};
-			proc_handler_call(obs_source_get_proc_handler(target), "get_status", &data);
-			auto count = calldata_int(&data, "frames");
-			calldata_free(&data);
-			return count;
-		};
-		auto startFrames = frames();
+		auto startFrames = frameCount(target);
 		auto startImports = dmabuf_import_stats();
 		draws = 0;
 		timespec startCpu{}, endCpu{};
@@ -1288,7 +1288,7 @@ class CaptureTest : public QObject
 		const double seconds = elapsed.nsecsElapsed() / 1e9;
 		clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &endCpu);
 		const double cpu = endCpu.tv_sec - startCpu.tv_sec + (endCpu.tv_nsec - startCpu.tv_nsec) / 1e9;
-		const auto captured = frames() - startFrames;
+		const auto captured = frameCount(target) - startFrames;
 		auto endImports = dmabuf_import_stats();
 		timer.stop();
 		calldata_t diagnostic{};
@@ -1303,9 +1303,6 @@ class CaptureTest : public QObject
 		      width, height, seconds, (long long)captured, captured / seconds, draws, cpu, cpu / seconds * 100,
 		      cpu * 1000 / captured);
 		QVERIFY(captured > 0);
-		obs_enter_graphics();
-		gs_texrender_destroy(render);
-		obs_leave_graphics();
 	}
 };
 
@@ -1318,10 +1315,12 @@ int main(int argc, char **argv)
 		qCritical("Tests need a Wayland session for libobs graphics.");
 		return 1;
 	}
+	auto disconnectDisplay = qScopeGuard([&] { wl_display_disconnect(display); });
 	obs_set_nix_platform(OBS_NIX_PLATFORM_WAYLAND);
 	obs_set_nix_platform_display(display);
 	if (!obs_startup("en-US", nullptr, nullptr))
 		return 1;
+	auto shutdownObs = qScopeGuard([] { obs_shutdown(); });
 	obs_video_info video{};
 	video.graphics_module = "libobs-opengl";
 	video.fps_num = qEnvironmentVariableIntValue("KWINCAPTURE_TEST_FPS_NUM");
@@ -1341,8 +1340,6 @@ int main(int argc, char **argv)
 	CaptureTest test;
 	int result = QTest::qExec(&test, argc, argv);
 	shutdown_capture();
-	obs_shutdown();
-	wl_display_disconnect(display);
 	return result;
 }
 
