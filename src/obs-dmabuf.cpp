@@ -163,7 +163,8 @@ class ObsDmaBufCapture : public DmaBufCapture
 		// render performs the same sRGB conversion as the CPU upload path.
 		gs_effect_set_texture(gs_effect_get_param_by_name(effect, "image"), texture);
 		while (gs_effect_loop(effect, "Draw")) {
-			gs_render_start(true);
+			// Reuse OBS's immediate vertex buffer for the four-vertex quad.
+			gs_render_start(false);
 			for (auto corner : {std::pair{0u, 0u}, std::pair{layout.width, 0u},
 					    std::pair{0u, layout.height}, std::pair{layout.width, layout.height}}) {
 				auto [x, y] = corner;
