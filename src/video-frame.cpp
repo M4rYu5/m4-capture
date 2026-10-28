@@ -24,21 +24,8 @@ static bool validLayout(const spa_data &plane, const spa_video_info_raw &format,
 	       end - std::min(first, last) <= plane.chunk->size;
 }
 
-FrameResult convert_video_frame(const spa_buffer &buffer, const spa_video_info_raw &format, VideoFrame &output)
+VideoLayout video_layout(const spa_buffer &buffer, const spa_video_info_raw &format)
 {
-	if (!supported_video_format(format))
-		return FrameResult::UnsupportedFormat;
-	if (!buffer.n_datas)
-		return FrameResult::Empty;
-	const auto &plane = buffer.datas[0];
-	if (!plane.data || !plane.chunk || plane.type == SPA_DATA_DmaBuf)
-		return FrameResult::UnmappedBuffer;
-	if (!plane.chunk->size || (plane.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED))
-		return FrameResult::Empty;
-	int64_t stride = plane.chunk->stride ? plane.chunk->stride : int64_t(format.size.width) * 4;
-	if (!validLayout(plane, format, stride))
-		return FrameResult::InvalidLayout;
-
 	uint32_t x = 0, y = 0, width = format.size.width, height = format.size.height;
 	auto crop = static_cast<const spa_meta_region *>(
 	    spa_buffer_find_meta_data(&buffer, SPA_META_VideoCrop, sizeof(spa_meta_region)));
@@ -54,8 +41,27 @@ FrameResult convert_video_frame(const spa_buffer &buffer, const spa_video_info_r
 	    spa_buffer_find_meta_data(&buffer, SPA_META_VideoTransform, sizeof(spa_meta_videotransform)));
 	uint32_t rotation = transform ? (transform->transform & 3) : 0;
 	bool flip = transform && (transform->transform & 4);
+	return {x, y, width, height, rotation, flip};
+}
+
+FrameResult convert_video_frame(const spa_buffer &buffer, const spa_video_info_raw &format, VideoFrame &output)
+{
+	if (!supported_video_format(format))
+		return FrameResult::UnsupportedFormat;
+	if (!buffer.n_datas)
+		return FrameResult::Empty;
+	const auto &plane = buffer.datas[0];
+	if (!plane.data || !plane.chunk || plane.type == SPA_DATA_DmaBuf)
+		return FrameResult::UnmappedBuffer;
+	if (!plane.chunk->size || (plane.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED))
+		return FrameResult::Empty;
+	int64_t stride = plane.chunk->stride ? plane.chunk->stride : int64_t(format.size.width) * 4;
+	if (!validLayout(plane, format, stride))
+		return FrameResult::InvalidLayout;
+	auto [x, y, width, height, rotation, flip] = video_layout(buffer, format);
 	output.width = (rotation & 1) ? height : width;
 	output.height = (rotation & 1) ? width : height;
+	output.gpu.reset();
 	output.pixels.resize(size_t(output.width) * output.height * 4);
 	bool rgb = format.format == SPA_VIDEO_FORMAT_RGBA || format.format == SPA_VIDEO_FORMAT_RGBx;
 	bool opaque = format.format == SPA_VIDEO_FORMAT_BGRx || format.format == SPA_VIDEO_FORMAT_RGBx;

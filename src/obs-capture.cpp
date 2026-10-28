@@ -1,4 +1,5 @@
 #include "obs-capture.hpp"
+#include "obs-dmabuf.hpp"
 
 #include <algorithm>
 #include <obs-frontend-api.h>
@@ -65,6 +66,19 @@ std::shared_ptr<CaptureState> create_obs_capture_state(obs_source_t *source, obs
 		if (obs_frontend_get_main_window())
 			obs_frontend_save();
 	};
+	callbacks.changed = [weak, mode = FrameBuffer::Mode::None](const CaptureState &state) mutable {
+		auto nextMode = state.frames->mode();
+		if (mode == nextMode)
+			return;
+		mode = nextMode;
+		auto source = OBSGetStrongRef(weak);
+		if (!source || obs_source_removed(source))
+			return;
+		obs_source_update_properties(source);
+		if (mode != FrameBuffer::Mode::None)
+			blog(LOG_INFO, "[KWinCapture] %s capture",
+			     mode == FrameBuffer::Mode::DmaBuf ? "DMA-BUF GPU" : "CPU fallback");
+	};
 	callbacks.focused = [weak] {
 		auto source = OBSGetStrongRef(weak);
 		if (!source || !obs_frontend_get_main_window())
@@ -74,7 +88,10 @@ std::shared_ptr<CaptureState> create_obs_capture_state(obs_source_t *source, obs
 		if (scene && raise_source_items(scene, source))
 			obs_frontend_save();
 	};
-	callbacks.error = [](const QString &error) { blog(LOG_WARNING, "[KWinCapture] %s", error.toUtf8().constData()); };
+	callbacks.error = [](const QString &error) {
+		blog(LOG_WARNING, "[KWinCapture] %s", error.toUtf8().constData());
+	};
+	callbacks.gpu = create_obs_dmabuf_capture();
 	return std::make_shared<CaptureState>(std::clamp<long long>(obs_data_get_int(settings, "width"), 1, 16384),
 					      std::clamp<long long>(obs_data_get_int(settings, "height"), 1, 16384),
 					      std::move(callbacks));

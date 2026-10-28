@@ -1,13 +1,19 @@
+#include "dmabuf-fixture.hpp"
 #include "kwin-fixture.hpp"
 #include "obs-capture.hpp"
+#include "obs-dmabuf.hpp"
 #include "video-fixture.hpp"
+#include <QScopeGuard>
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <obs-nix-platform.h>
 
 #include <QApplication>
+#include <QElapsedTimer>
+#include <QPainter>
 #include <QTest>
+#include <ctime>
 #include <wayland-client.h>
 
 static QWidget *mainWindow = nullptr;
@@ -506,6 +512,7 @@ class CaptureTest : public QObject
 		auto updated = [](void *data, calldata_t *) { ++*static_cast<int *>(data); };
 		OBSSignal updateSignal(obs_source_get_signal_handler(target), "update_properties", updated, &updates);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		const int initialUpdates = updates;
 		int requests = kwin.captureRequests;
 		OBSDataAutoRelease settings = obs_source_get_settings(target);
 		for (const char *filter : {"E", "Ed", "Editor"}) {
@@ -515,6 +522,7 @@ class CaptureTest : public QObject
 			QCOMPARE(kwin.captureRequests, requests);
 			QCOMPARE(status(target), QString("capturing"));
 			QCOMPARE(renderedPixel(target).alpha(), 255);
+			QCOMPARE(updates, initialUpdates);
 		}
 		obs_data_set_int(settings, "title_match", int(TitleMatch::Exact));
 		obs_data_set_bool(settings, "case_sensitive", true);
@@ -546,7 +554,97 @@ class CaptureTest : public QObject
 		QCOMPARE(renderedPixel(target).alpha(), 0);
 		QCOMPARE(obs_source_get_width(target), uint32_t(160));
 		QCOMPARE(obs_source_get_height(target), uint32_t(90));
-		QCOMPARE(updates, 0);
+		QVERIFY(updates > initialUpdates); // Refresh the fallback warning when capture stops/restarts.
+	}
+
+	void cpuFallbackWarning()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		kwin.add({"fallback", "test.app", "CPU capture", false});
+		OBSSourceAutoRelease target = source("CPU warning");
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		auto props = obs_source_properties(target);
+		auto warning = obs_properties_first(props);
+		QCOMPARE(QString(obs_property_name(warning)), QString("cpu_fallback"));
+		QVERIFY(obs_property_visible(warning));
+		QCOMPARE(obs_property_text_info_type(warning), OBS_TEXT_INFO_WARNING);
+		QVERIFY(obs_property_next(&warning));
+		QCOMPARE(QString(obs_property_name(warning)), QString("selected_window"));
+		obs_properties_destroy(props);
+		kwin.remove("fallback");
+		QTRY_VERIFY(status(target) != "capturing");
+		props = obs_source_properties(target);
+		QVERIFY(!obs_property_visible(obs_properties_get(props, "cpu_fallback")));
+		obs_properties_destroy(props);
+	}
+
+	void gpuTransformsMatchCpu_data()
+	{
+		QTest::addColumn<uint32_t>("transform");
+		QTest::addColumn<bool>("crop");
+		QTest::addColumn<bool>("opaque");
+		for (uint32_t transform = 0; transform < 8; ++transform)
+			for (bool crop : {false, true})
+				for (bool opaque : {false, true})
+					QTest::newRow(qPrintable(
+					    QString("%1-crop%2-opaque%3").arg(transform).arg(crop).arg(opaque)))
+					    << transform << crop << opaque;
+	}
+
+	void gpuTransformsMatchCpu()
+	{
+		QFETCH(uint32_t, transform);
+		QFETCH(bool, crop);
+		QFETCH(bool, opaque);
+		auto capture = create_obs_dmabuf_capture();
+		if (!capture)
+			QSKIP("GPU DMA-BUF import unavailable on this graphics backend.");
+		TestDmaBuf input;
+		if (!input.buffer.n_datas || !supported_video_format(input.format))
+			QSKIP("Driver cannot export the test texture as a supported DMA-BUF.");
+		input.transform.transform = transform;
+		if (crop)
+			input.crop.region = {{1, 2}, {13, 7}};
+		if (opaque)
+			input.format.format = input.format.format == SPA_VIDEO_FORMAT_BGRA ? SPA_VIDEO_FORMAT_BGRx
+											   : SPA_VIDEO_FORMAT_RGBx;
+		spa_chunk chunk{};
+		chunk.size = input.pixels.size();
+		chunk.stride = 16 * 4;
+		spa_data plane{};
+		plane.type = SPA_DATA_MemPtr;
+		plane.data = input.pixels.data();
+		plane.maxsize = input.pixels.size();
+		plane.chunk = &chunk;
+		auto buffer = input.buffer;
+		buffer.n_datas = 1;
+		buffer.datas = &plane;
+		auto format = input.format;
+		format.format = opaque ? SPA_VIDEO_FORMAT_BGRx : SPA_VIDEO_FORMAT_BGRA;
+		VideoFrame expected, actual;
+		QCOMPARE(convert_video_frame(buffer, format, expected), FrameResult::Ready);
+		QCOMPARE(capture->copy(input.buffer, input.format, actual), FrameResult::Ready);
+		QCOMPARE(actual.width, expected.width);
+		QCOMPARE(actual.height, expected.height);
+		QVERIFY(actual.pixels.empty());
+		obs_enter_graphics();
+		auto stage = gs_stagesurface_create(actual.width, actual.height, GS_BGRA);
+		gs_stage_texture(stage, obs_frame_texture(actual));
+		uint8_t *bytes = nullptr;
+		uint32_t stride = 0;
+		bool mapped = gs_stagesurface_map(stage, &bytes, &stride);
+		QByteArray pixels;
+		if (mapped) {
+			for (uint32_t y = 0; y < actual.height; ++y)
+				pixels.append(reinterpret_cast<char *>(bytes + y * stride), actual.width * 4);
+			gs_stagesurface_unmap(stage);
+		}
+		gs_stagesurface_destroy(stage);
+		obs_leave_graphics();
+		QVERIFY(mapped);
+		QCOMPARE(pixels,
+			 QByteArray(reinterpret_cast<const char *>(expected.pixels.data()), expected.pixels.size()));
 	}
 
 	void liveKWinCapture()
@@ -562,13 +660,13 @@ class CaptureTest : public QObject
 			return w;
 		};
 		auto window = makeWindow();
-		QTRY_VERIFY_WITH_TIMEOUT(
-		    ([&] {
-			    auto windows = capture_windows();
-			    return std::any_of(windows.begin(), windows.end(),
-					       [](const WindowInfo &w) { return w.appId == "kwincapture-test"; });
-		    })(),
-		    5000);
+		QTRY_VERIFY_WITH_TIMEOUT(([&] {
+						 auto windows = capture_windows();
+						 return std::any_of(
+						     windows.begin(), windows.end(),
+						     [](const WindowInfo &w) { return w.appId == "kwincapture-test"; });
+					 })(),
+					 5000);
 		OBSSourceAutoRelease target = source("Live target", "kwincapture-test");
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
 		auto pixel = renderedPixel(target);
@@ -585,6 +683,148 @@ class CaptureTest : public QObject
 		QCOMPARE(renderedPixel(target).alpha(), 255);
 		window.reset();
 		QTRY_VERIFY(status(target) != "capturing");
+	}
+
+	void liveImportFailureFallsBackToCpu()
+	{
+		if (!live)
+			QSKIP("Opt-in test captures only its own temporary Wayland window.");
+		auto gpu = create_obs_dmabuf_capture();
+		if (!gpu)
+			QSKIP("DMA-BUF import is unavailable.");
+		class RejectImport : public DmaBufCapture
+		{
+		      public:
+			std::shared_ptr<DmaBufCapture> delegate;
+			std::atomic<int> rejected{0};
+			explicit RejectImport(std::shared_ptr<DmaBufCapture> gpu) : delegate(std::move(gpu))
+			{
+				formats = delegate->formats;
+				explicitSync = delegate->explicitSync;
+			}
+			FrameResult copy(const spa_buffer &buffer, const spa_video_info_raw &, VideoFrame &) override
+			{
+				++rejected;
+				delegate->discard(buffer);
+				return FrameResult::UnmappedBuffer;
+			}
+			void discard(const spa_buffer &buffer) override { delegate->discard(buffer); }
+		};
+		auto reject = std::make_shared<RejectImport>(gpu);
+		QWidget window;
+		window.setWindowTitle("KWinCapture fallback check");
+		window.setFixedSize(160, 90);
+		window.setStyleSheet("background-color: rgb(224, 128, 32)");
+		window.show();
+		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
+		CaptureCallbacks callbacks;
+		callbacks.gpu = reject;
+		auto state = std::make_shared<CaptureState>(160, 90, callbacks);
+		auto cleanup = qScopeGuard([&] { release_capture(state); });
+		CaptureConfig config;
+		config.rule.appId = "kwincapture-test";
+		state->configure(config);
+		queue_capture_update(state);
+		QTRY_COMPARE_WITH_TIMEOUT(state->frames->mode(), FrameBuffer::Mode::Cpu, 12000);
+		QVERIFY(reject->rejected.load() > 0);
+		VideoFrame frame;
+		QCOMPARE(state->frames->take(frame), FrameBuffer::Update::Updated);
+		QVERIFY(!frame.pixels.empty());
+		QVERIFY(!frame.gpu);
+		QVERIFY(!reject->enabled.load());
+		auto rejected = reject->rejected.load();
+		auto sequence = state->frames->sequence();
+		config.cursor = false;
+		state->configure(config);
+		queue_capture_update(state);
+		QTRY_VERIFY_WITH_TIMEOUT(state->frames->sequence() > sequence, 5000);
+		QCOMPARE(state->frames->mode(), FrameBuffer::Mode::Cpu);
+		QCOMPARE(reject->rejected.load(), rejected);
+	}
+
+	void capturePerformance()
+	{
+		if (!live || !qEnvironmentVariableIsSet("KWINCAPTURE_BENCHMARK_WIDTH"))
+			QSKIP("Opt-in benchmark captures only its own animated window.");
+		const int width = qEnvironmentVariableIntValue("KWINCAPTURE_BENCHMARK_WIDTH");
+		const int height = width == 3840 ? 2160 : 1080;
+		class AnimatedWindow : public QWidget
+		{
+		      public:
+			int tick = 0;
+			void paintEvent(QPaintEvent *) override
+			{
+				QPainter painter(this);
+				painter.fillRect(rect(), QColor(80 + tick % 120, 80, 40));
+			}
+		} window;
+		window.setWindowFlags(Qt::FramelessWindowHint);
+		window.setWindowTitle("KWinCapture performance check");
+		window.setFixedSize(width, height);
+		window.show();
+		QTest::qWait(200);
+		window.setFixedSize(width, height);
+		window.resize(width, height);
+		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
+		OBSSourceAutoRelease target = source("Performance target", "kwincapture-test");
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 15000);
+		QCOMPARE(obs_source_get_width(target), uint32_t(width));
+		QCOMPARE(obs_source_get_height(target), uint32_t(height));
+		obs_enter_graphics();
+		auto render = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+		obs_leave_graphics();
+		QTimer timer;
+		timer.setTimerType(Qt::PreciseTimer);
+		int draws = 0;
+		connect(&timer, &QTimer::timeout, this, [&] {
+			++window.tick;
+			window.update();
+			obs_enter_graphics();
+			gs_texrender_reset(render);
+			if (gs_texrender_begin(render, width, height)) {
+				gs_projection_push();
+				gs_ortho(0, width, 0, height, -100, 100);
+				obs_source_video_render(target);
+				gs_projection_pop();
+				gs_texrender_end(render);
+				gs_flush();
+				++draws;
+			}
+			obs_leave_graphics();
+		});
+		timer.start(16);
+		QTest::qWait(2000);
+		auto frames = [&] {
+			calldata_t data{};
+			proc_handler_call(obs_source_get_proc_handler(target), "get_status", &data);
+			auto count = calldata_int(&data, "frames");
+			calldata_free(&data);
+			return count;
+		};
+		auto startFrames = frames();
+		draws = 0;
+		timespec startCpu{}, endCpu{};
+		clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &startCpu);
+		QElapsedTimer elapsed;
+		elapsed.start();
+		QTest::qWait(10000);
+		const double seconds = elapsed.nsecsElapsed() / 1e9;
+		clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &endCpu);
+		const double cpu = endCpu.tv_sec - startCpu.tv_sec + (endCpu.tv_nsec - startCpu.tv_nsec) / 1e9;
+		const auto captured = frames() - startFrames;
+		timer.stop();
+		calldata_t diagnostic{};
+		proc_handler_call(obs_source_get_proc_handler(target), "get_status", &diagnostic);
+		qInfo("BENCHMARK_PATH %s", calldata_bool(&diagnostic, "gpu") ? "dmabuf" : "cpu");
+		calldata_free(&diagnostic);
+		qInfo("BENCHMARK %dx%d seconds=%.3f frames=%lld capture_fps=%.2f draws=%d cpu_seconds=%.3f "
+		      "cpu_percent=%.2f cpu_ms_per_frame=%.3f",
+		      width, height, seconds, (long long)captured, captured / seconds, draws, cpu, cpu / seconds * 100,
+		      cpu * 1000 / captured);
+		QVERIFY(captured > 0);
+		obs_enter_graphics();
+		gs_texrender_destroy(render);
+		obs_leave_graphics();
 	}
 };
 

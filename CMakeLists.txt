@@ -6,11 +6,13 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "KWinCapture currently targets Linux.")
 endif()
 
-find_package(libobs REQUIRED CONFIG)
+find_package(libobs 32 REQUIRED CONFIG)
 find_package(obs-frontend-api REQUIRED CONFIG)
 find_package(Qt6 REQUIRED COMPONENTS Core)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3>=0.3.40)
+pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.2)
+pkg_check_modules(DRM REQUIRED IMPORTED_TARGET libdrm)
+find_package(OpenGL REQUIRED)
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 set(PROTOCOL_SOURCES)
@@ -53,10 +55,11 @@ set(OBS_SOURCES
   src/obs-capture.cpp src/obs-capture.hpp
   src/focus-order.cpp
   src/kwincapture-source.cpp
+  src/obs-dmabuf.cpp src/obs-dmabuf.hpp
 )
 add_library(kwincapture MODULE src/plugin.cpp ${OBS_SOURCES})
 target_link_libraries(kwincapture PRIVATE
-  capture-core OBS::libobs OBS::obs-frontend-api
+  capture-core OBS::libobs OBS::obs-frontend-api PkgConfig::DRM OpenGL::GL
 )
 target_compile_features(kwincapture PRIVATE cxx_std_17)
 target_compile_options(kwincapture PRIVATE -Wall -Wextra -Wpedantic)
@@ -80,6 +83,7 @@ install(FILES LICENSE DESTINATION .)
 option(KWINCAPTURE_BUILD_TESTS "Build window matching and capture lifecycle tests" OFF)
 if(KWINCAPTURE_BUILD_TESTS)
   enable_testing()
+  find_package(OpenGL REQUIRED COMPONENTS EGL)
   find_package(Qt6 REQUIRED COMPONENTS Test Widgets)
   add_executable(window-rule-tests tests/window-rule-test.cpp src/window-rule.cpp)
   target_include_directories(window-rule-tests PRIVATE src)
@@ -127,7 +131,7 @@ if(KWINCAPTURE_BUILD_TESTS)
   target_include_directories(kwincapture-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_compile_features(kwincapture-tests PRIVATE cxx_std_17)
   target_link_libraries(kwincapture-tests PRIVATE
-    capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::WAYLAND_SERVER
+    capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::WAYLAND_SERVER PkgConfig::DRM OpenGL::GL OpenGL::EGL
   )
   set_target_properties(kwincapture-tests PROPERTIES AUTOMOC ON)
   add_test(NAME obs-integration COMMAND $<TARGET_FILE:kwincapture-tests>)

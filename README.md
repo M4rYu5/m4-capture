@@ -15,6 +15,9 @@ rule waits for that application instead of depending on a particular process or
 window ID. Existing sources from the earlier portal version need a new selection
 once; their scene items and last dimensions are preserved.
 
+If GPU capture is unavailable, a short CPU fallback warning appears directly
+above **Window**. It disappears when GPU capture is active or capture stops.
+
 Properties include:
 
 | Option | Behavior |
@@ -62,10 +65,10 @@ windows on the desktop.
 
 ## Requirements
 
-- Native Linux OBS Studio with its development headers, frontend API, and Qt 6 UI.
+- Native Linux OBS Studio 32+ with its development headers, frontend API, and Qt 6 UI.
 - KDE Plasma Wayland exposing `org_kde_plasma_window_management` version 17+ and
   `zkde_screencast_unstable_v1`.
-- PipeWire and Wayland development headers, Qt 6 Core, a C++17 compiler,
+- PipeWire 1.2+, Wayland, libdrm and OpenGL development headers, Qt 6 Core, a C++17 compiler,
   CMake 3.24+, Ninja, pkg-config, and `pgrep`.
 
 The optional test build also requires Qt 6 Test, Qt 6 Widgets, and Wayland server
@@ -74,7 +77,7 @@ development headers. The plugin itself uses Qt 6 Core.
 On Arch Linux:
 
 ```sh
-sudo pacman -S --needed base-devel cmake ninja pkgconf obs-studio procps-ng qt6-base pipewire wayland
+sudo pacman -S --needed base-devel cmake ninja pkgconf obs-studio procps-ng qt6-base pipewire wayland libdrm libglvnd
 ```
 
 The protocol XML files are included under `protocols/`; bindings are generated
@@ -175,6 +178,7 @@ QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-tests liveKW
 - `src/obs-capture.cpp`: OBS settings, persistence, logging, and focus-action callbacks.
 - `src/focus-order.cpp`: ordering items inside their existing containers.
 - `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
+- `src/obs-dmabuf.cpp`: GPU buffer import, synchronization and GPU crop/rotation/flip rendering.
 - `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.
 - `src/kwincapture-source.cpp`: OBS properties, saved configuration, and rendering.
 
@@ -202,8 +206,34 @@ Cursor changes restart the stream while retaining the current window; target-rul
 edits re-evaluate selection. Unrelated settings edits leave a live stream intact.
 Old stream callbacks are ignored using an attempt generation incremented before teardown.
 
-Video uses a shared-memory CPU copy path; GPU-only buffers and HDR are unsupported.
-High-resolution/frame-rate performance has not been profiled.
+Video prefers PipeWire DMA-BUFs supported by the OBS graphics device. KWin GPU
+buffers are imported into OBS; crop, rotation, flipping, channel handling and
+opaque-alpha handling happen on the GPU. Frames are drawn into reusable GPU
+textures before returning the capture buffers, avoiding CPU pixel copies and
+uploads while keeping buffer reuse independent of OBS rendering.
+
+Explicit GPU acquire/release fences are negotiated when supported. With older
+producers using implicit synchronization, GPU reads finish before their buffers
+are returned. If GPU import is unavailable or fails, capture falls back to mapped
+shared-memory BGRA/RGBA conversion and upload. A failed GPU path stays disabled
+for that source's lifetime, including reconnections; recreating the source or
+restarting OBS tries GPU capture again. HDR remains unsupported.
+
+For diagnosis, launch OBS with `KWINCAPTURE_FORCE_CPU=1` to force the CPU path.
+Logs identify `DMA-BUF GPU capture` or `CPU fallback capture`.
+
+The opt-in benchmark captures its own animated window at 1920×1080 and 3840×2160,
+with two seconds of warm-up and ten seconds of measurement per sample:
+
+```sh
+python3 scripts/benchmark-capture.py --runs 3
+```
+
+Build the Release integration tests first. The script compares DMA-BUF and
+forced CPU fallback, saves raw logs and JSON under `build-release/`, and reports
+median process CPU usage and received frame rates. `--baseline /path/to/binary`
+also measures a preserved pre-change benchmark executable. See
+[the performance notes](docs/capture-performance.md) for measured results and scope.
 
 ## License
 

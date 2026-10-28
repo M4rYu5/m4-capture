@@ -16,6 +16,7 @@ class KWinCapture;
 class KWinConnection;
 class KWinStream;
 class PipeWireCapture;
+class DmaBufCapture;
 enum class PipeWireStatus;
 
 // Idle: unconfigured; Waiting: no unique target; Connecting:
@@ -41,6 +42,8 @@ struct CaptureCallbacks {
 	std::function<void(const CaptureState &)> save;
 	std::function<void()> focused;
 	std::function<void(const QString &)> error;
+	std::function<void(const CaptureState &)> changed;
+	std::shared_ptr<DmaBufCapture> gpu;
 };
 
 // Configuration and diagnostic accessors are safe to call from any thread.

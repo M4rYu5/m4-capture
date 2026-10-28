@@ -50,6 +50,25 @@ class FrameBufferTest : public QObject
 		QCOMPARE(output.width, 2u);
 		QCOMPARE(output.pixels, (std::vector<uint8_t>{13, 14, 15, 16, 17, 18, 19, 20}));
 	}
+	void gpuHandoffAndFallback()
+	{
+		FrameBuffer buffer;
+		VideoFrame input{{}, 2, 3, std::make_shared<GpuFrame>()};
+		auto texture = input.gpu;
+		QVERIFY(buffer.publish(input));
+		QCOMPARE(buffer.mode(), FrameBuffer::Mode::DmaBuf);
+		VideoFrame output;
+		QCOMPARE(buffer.take(output), FrameBuffer::Update::Updated);
+		QCOMPARE(output.gpu, texture);
+		QCOMPARE(buffer.mode(), FrameBuffer::Mode::DmaBuf);
+		input = {{1, 2, 3, 4}, 2, 3, {}};
+		QVERIFY(buffer.publish(input));
+		QCOMPARE(buffer.mode(), FrameBuffer::Mode::Cpu);
+		QCOMPARE(buffer.take(output), FrameBuffer::Update::Updated);
+		QVERIFY(!output.gpu);
+		buffer.clear();
+		QCOMPARE(buffer.mode(), FrameBuffer::Mode::None);
+	}
 };
 
 QTEST_GUILESS_MAIN(FrameBufferTest)

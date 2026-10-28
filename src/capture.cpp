@@ -71,8 +71,11 @@ KWinCapture::KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *ba
 	deadline.setSingleShot(true);
 	deadline.setInterval(15000);
 	connect(&retry, &QTimer::timeout, this, [this] { reconcile(); });
-	connect(&deadline, &QTimer::timeout, this,
-		[this] { failed(QStringLiteral("No video frames were received.")); });
+	connect(&deadline, &QTimer::timeout, this, [this] {
+		if (pipewire)
+			pipewire->disableGpu();
+		failed(QStringLiteral("No video frames were received."));
+	});
 	connect(backend, &KWinConnection::changed, this, [this] { reconcile(); });
 }
 
@@ -120,7 +123,12 @@ void KWinCapture::stopStream()
 	state->frames->clear();
 }
 
-void KWinCapture::status(CaptureStatus next, const QString &detail) { state->setStatus(next, detail); }
+void KWinCapture::status(CaptureStatus next, const QString &detail)
+{
+	state->setStatus(next, detail);
+	if (state->callbacks.changed)
+		state->callbacks.changed(*state);
+}
 
 void KWinCapture::focused(const WindowInfo &window)
 {
@@ -210,7 +218,8 @@ void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &se
 	    [this, attempt](PipeWireStatus next) {
 		    QMetaObject::invokeMethod(
 			this, [this, attempt, next] { streamStatusChanged(attempt, next); }, Qt::QueuedConnection);
-	    });
+	    },
+	    state->callbacks.gpu);
 	if (!pipewire->start(-1, node, serial)) {
 		failed(QStringLiteral("Could not connect to the KWin PipeWire stream."));
 		return;

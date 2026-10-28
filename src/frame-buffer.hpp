@@ -13,6 +13,7 @@ class FrameBuffer
 		uint32_t height;
 	};
 	enum class Update { Empty, Unchanged, Updated };
+	enum class Mode { None, Cpu, DmaBuf };
 
 	explicit FrameBuffer(uint32_t width = 1280, uint32_t height = 720);
 	// Returns true for the first frame after clear(), or a size change.
@@ -21,10 +22,14 @@ class FrameBuffer
 	Update take(VideoFrame &frame);
 	void clear();
 	Size size() const;
+	uint64_t sequence() const;
+	Mode mode() const;
 
       private:
 	mutable std::mutex mutex;
 	VideoFrame latest;
 	bool available = false;
 	bool dirty = false;
+	uint64_t published = 0;
+	Mode captureMode = Mode::None;
 };
