@@ -11,6 +11,11 @@
 #include <spa/buffer/meta.h>
 #include <unistd.h>
 
+struct DmaBufImportStats {
+	uint64_t created, destroyed;
+};
+DmaBufImportStats dmabuf_import_stats();
+
 // Export a real texture on the current OBS GPU. No compositor/window contents
 // are involved, and fd ownership lasts until after the import tests finish.
 struct TestDmaBuf {
@@ -82,6 +87,17 @@ struct TestDmaBuf {
 			if (image != EGL_NO_IMAGE)
 				eglDestroyImage(display, image);
 		}
+		glFinish();
+		obs_leave_graphics();
+	}
+	void upload()
+	{
+		obs_enter_graphics();
+		GLint previous = 0;
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+		glBindTexture(GL_TEXTURE_2D, *static_cast<GLuint *>(gs_texture_get_obj(texture)));
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 16, 12, GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+		glBindTexture(GL_TEXTURE_2D, previous);
 		glFinish();
 		obs_leave_graphics();
 	}

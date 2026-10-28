@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <unordered_map>
 
 namespace
 {
@@ -105,39 +106,82 @@ class BufferRelease
 	}
 };
 
+struct ImportLayout {
+	uint32_t width = 0, height = 0, format = 0, planes = 0;
+	uint64_t modifier = 0;
+	std::array<int, 4> fds{};
+	std::array<uint32_t, 4> offsets{}, strides{};
+	bool operator==(const ImportLayout &other) const
+	{
+		return width == other.width && height == other.height && format == other.format &&
+		       planes == other.planes && modifier == other.modifier && fds == other.fds &&
+		       offsets == other.offsets && strides == other.strides;
+	}
+};
+
+struct ImportedTexture {
+	ImportLayout layout;
+	std::unique_ptr<gs_texture_t, decltype(&gs_texture_destroy)> texture{nullptr, gs_texture_destroy};
+};
+
 class ObsDmaBufCapture : public DmaBufCapture
 {
+      private:
+	// Scoped to the live PipeWire pool, never keyed by reusable fd numbers.
+	// All access and texture destruction happen under the OBS graphics lock.
+	std::unordered_map<const spa_buffer *, ImportedTexture> imports;
+
       public:
+	~ObsDmaBufCapture() override { clearImports(); }
+	void removeBuffer(const spa_buffer &buffer) override
+	{
+		GraphicsLock lock;
+		imports.erase(&buffer);
+	}
+	void clearImports() override
+	{
+		GraphicsLock lock;
+		imports.clear();
+	}
 	FrameResult copy(const spa_buffer &buffer, const spa_video_info_raw &format, VideoFrame &output) override
 	{
 		GraphicsLock lock;
 		BufferRelease release(buffer);
 		if (!supported_video_format(format))
 			return FrameResult::UnsupportedFormat;
-		uint32_t planes = 0;
-		std::array<int, 4> fds;
-		std::array<uint32_t, 4> offsets, strides;
-		std::array<uint64_t, 4> modifiers;
-		while (planes < buffer.n_datas && buffer.datas[planes].type == SPA_DATA_DmaBuf) {
-			const auto &plane = buffer.datas[planes];
-			if (planes >= fds.size() || plane.fd < 0 || !plane.chunk || plane.chunk->stride <= 0)
+		ImportLayout input;
+		input.width = format.size.width;
+		input.height = format.size.height;
+		input.format = drmFormat(format.format);
+		input.modifier = format.modifier;
+		while (input.planes < buffer.n_datas && buffer.datas[input.planes].type == SPA_DATA_DmaBuf) {
+			const auto &plane = buffer.datas[input.planes];
+			if (input.planes >= input.fds.size() || plane.fd < 0 || !plane.chunk ||
+			    plane.chunk->stride <= 0)
 				return FrameResult::InvalidLayout;
 			if (plane.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED)
 				return FrameResult::Empty;
-			fds[planes] = plane.fd;
-			offsets[planes] = plane.chunk->offset;
-			strides[planes] = plane.chunk->stride;
-			modifiers[planes] = format.modifier;
-			++planes;
+			input.fds[input.planes] = plane.fd;
+			input.offsets[input.planes] = plane.chunk->offset;
+			input.strides[input.planes] = plane.chunk->stride;
+			++input.planes;
 		}
-		if (!planes)
+		if (!input.planes)
 			return FrameResult::InvalidLayout;
 		if (!release.acquire())
 			return FrameResult::UnmappedBuffer;
-		auto texture = gs_texture_create_from_dmabuf(
-		    format.size.width, format.size.height, drmFormat(format.format), GS_BGRA, planes, fds.data(),
-		    strides.data(), offsets.data(),
-		    format.modifier == DRM_FORMAT_MOD_INVALID ? nullptr : modifiers.data());
+		auto &entry = imports[&buffer];
+		if (!entry.texture || !(entry.layout == input)) {
+			entry.texture.reset();
+			entry.layout = input;
+			std::array<uint64_t, 4> modifiers;
+			modifiers.fill(input.modifier);
+			entry.texture.reset(gs_texture_create_from_dmabuf(
+			    input.width, input.height, input.format, GS_BGRA, input.planes, input.fds.data(),
+			    input.strides.data(), input.offsets.data(),
+			    input.modifier == DRM_FORMAT_MOD_INVALID ? nullptr : modifiers.data()));
+		}
+		auto texture = entry.texture.get();
 		if (!texture)
 			return FrameResult::UnmappedBuffer;
 		auto layout = video_layout(buffer, format);
@@ -145,10 +189,8 @@ class ObsDmaBufCapture : public DmaBufCapture
 		if (!frame)
 			frame = std::make_shared<ObsGpuFrame>();
 		gs_texrender_reset(frame->target);
-		if (!gs_texrender_begin(frame->target, layout.outputWidth(), layout.outputHeight())) {
-			gs_texture_destroy(texture);
+		if (!gs_texrender_begin(frame->target, layout.outputWidth(), layout.outputHeight()))
 			return FrameResult::UnmappedBuffer;
-		}
 		bool srgb = gs_framebuffer_srgb_enabled();
 		gs_enable_framebuffer_srgb(false);
 		gs_blend_state_push();
@@ -196,7 +238,6 @@ class ObsDmaBufCapture : public DmaBufCapture
 		gs_blend_state_pop();
 		gs_enable_framebuffer_srgb(srgb);
 		gs_texrender_end(frame->target);
-		gs_texture_destroy(texture);
 		output.width = layout.outputWidth();
 		output.height = layout.outputHeight();
 		output.pixels.clear();

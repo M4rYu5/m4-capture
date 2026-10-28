@@ -57,6 +57,7 @@ class PipeWireCapture
 	static void onState(void *data, pw_stream_state old, pw_stream_state next, const char *error);
 	static void onParam(void *data, uint32_t id, const spa_pod *param);
 	static void onProcess(void *data);
+	static void onRemoveBuffer(void *data, pw_buffer *buffer);
 	static void onCoreError(void *data, uint32_t id, int seq, int res, const char *message);
 	static void onGlobalRemove(void *data, uint32_t id);
 };

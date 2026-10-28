@@ -84,6 +84,25 @@ class CaptureTest : public QObject
 		obs_leave_graphics();
 		return result;
 	}
+	QByteArray gpuPixels(const VideoFrame &frame)
+	{
+		obs_enter_graphics();
+		auto stage = gs_stagesurface_create(frame.width, frame.height, GS_BGRA);
+		QByteArray pixels;
+		if (stage) {
+			gs_stage_texture(stage, obs_frame_texture(frame));
+			uint8_t *bytes = nullptr;
+			uint32_t stride = 0;
+			if (gs_stagesurface_map(stage, &bytes, &stride)) {
+				for (uint32_t y = 0; y < frame.height; ++y)
+					pixels.append(reinterpret_cast<char *>(bytes + y * stride), frame.width * 4);
+				gs_stagesurface_unmap(stage);
+			}
+			gs_stagesurface_destroy(stage);
+		}
+		obs_leave_graphics();
+		return pixels;
+	}
 
       private slots:
 	void initTestCase()
@@ -638,23 +657,85 @@ class CaptureTest : public QObject
 		QCOMPARE(actual.width, expected.width);
 		QCOMPARE(actual.height, expected.height);
 		QVERIFY(actual.pixels.empty());
-		obs_enter_graphics();
-		auto stage = gs_stagesurface_create(actual.width, actual.height, GS_BGRA);
-		gs_stage_texture(stage, obs_frame_texture(actual));
-		uint8_t *bytes = nullptr;
-		uint32_t stride = 0;
-		bool mapped = gs_stagesurface_map(stage, &bytes, &stride);
-		QByteArray pixels;
-		if (mapped) {
-			for (uint32_t y = 0; y < actual.height; ++y)
-				pixels.append(reinterpret_cast<char *>(bytes + y * stride), actual.width * 4);
-			gs_stagesurface_unmap(stage);
-		}
-		gs_stagesurface_destroy(stage);
-		obs_leave_graphics();
-		QVERIFY(mapped);
-		QCOMPARE(pixels,
+		QCOMPARE(gpuPixels(actual),
 			 QByteArray(reinterpret_cast<const char *>(expected.pixels.data()), expected.pixels.size()));
+	}
+
+	void gpuImportCacheFollowsBufferLifetime()
+	{
+		auto capture = create_obs_dmabuf_capture();
+		if (!capture)
+			QSKIP("GPU DMA-BUF import unavailable on this graphics backend.");
+		TestDmaBuf first, second;
+		if (!first.buffer.n_datas || !second.buffer.n_datas || !supported_video_format(first.format) ||
+		    !supported_video_format(second.format))
+			QSKIP("Driver cannot export the test textures as supported DMA-BUFs.");
+		auto before = dmabuf_import_stats();
+		VideoFrame frame;
+		for (int round = 0; round < 8; ++round) {
+			for (auto input : {&first, &second}) {
+				for (size_t i = 0; i < input->pixels.size(); i += 4) {
+					input->pixels[i] = 20 + round * 20;
+					input->pixels[i + 1] = input == &first ? 80 : 160;
+					input->pixels[i + 2] = 230 - round * 20;
+					input->pixels[i + 3] = 255;
+				}
+				input->upload();
+				QCOMPARE(capture->copy(input->buffer, input->format, frame), FrameResult::Ready);
+				QCOMPARE(gpuPixels(frame),
+					 QByteArray(reinterpret_cast<const char *>(input->pixels.data()),
+						    input->pixels.size()));
+			}
+		}
+		QCOMPARE(dmabuf_import_stats().created - before.created, uint64_t(2));
+		QCOMPARE(dmabuf_import_stats().destroyed - before.destroyed, uint64_t(0));
+		capture->removeBuffer(first.buffer);
+		QCOMPARE(dmabuf_import_stats().destroyed - before.destroyed, uint64_t(1));
+		QCOMPARE(capture->copy(second.buffer, second.format, frame), FrameResult::Ready);
+		QCOMPARE(dmabuf_import_stats().created - before.created, uint64_t(2));
+		// The same address and fds can identify a new buffer lifetime after removal.
+		QCOMPARE(capture->copy(first.buffer, first.format, frame), FrameResult::Ready);
+		QCOMPARE(dmabuf_import_stats().created - before.created, uint64_t(3));
+		capture->clearImports();
+		QCOMPARE(dmabuf_import_stats().destroyed - before.destroyed, uint64_t(3));
+		QCOMPARE(capture->copy(second.buffer, second.format, frame), FrameResult::Ready);
+		QCOMPARE(dmabuf_import_stats().created - before.created, uint64_t(4));
+		capture.reset();
+		QCOMPARE(dmabuf_import_stats().destroyed - before.destroyed, uint64_t(4));
+	}
+
+	void gpuImportCacheInvalidatesChangedLayout()
+	{
+		auto capture = create_obs_dmabuf_capture();
+		if (!capture)
+			QSKIP("GPU DMA-BUF import unavailable on this graphics backend.");
+		TestDmaBuf input, replacement;
+		if (!input.buffer.n_datas || !replacement.buffer.n_datas || !supported_video_format(input.format) ||
+		    !supported_video_format(replacement.format))
+			QSKIP("Driver cannot export the test textures as supported DMA-BUFs.");
+		auto before = dmabuf_import_stats();
+		VideoFrame frame;
+		QCOMPARE(capture->copy(input.buffer, input.format, frame), FrameResult::Ready);
+		auto opaque = input.format;
+		opaque.format = opaque.format == SPA_VIDEO_FORMAT_BGRA ? SPA_VIDEO_FORMAT_BGRx : SPA_VIDEO_FORMAT_RGBx;
+		QCOMPARE(capture->copy(input.buffer, opaque, frame), FrameResult::Ready);
+		QCOMPARE(dmabuf_import_stats().created - before.created, uint64_t(2));
+		QCOMPARE(dmabuf_import_stats().destroyed - before.destroyed, uint64_t(1));
+		// Crop/rotation change the draw, not the underlying image import.
+		input.crop.region = {{1, 2}, {13, 7}};
+		input.transform.transform = SPA_META_TRANSFORMATION_90;
+		QCOMPARE(capture->copy(input.buffer, opaque, frame), FrameResult::Ready);
+		QCOMPARE(frame.width, uint32_t(7));
+		QCOMPARE(frame.height, uint32_t(13));
+		QCOMPARE(dmabuf_import_stats().created - before.created, uint64_t(2));
+		// Different plane storage at the same buffer address must replace the import.
+		input.buffer.n_datas = replacement.buffer.n_datas;
+		input.buffer.datas = replacement.buffer.datas;
+		QCOMPARE(capture->copy(input.buffer, replacement.format, frame), FrameResult::Ready);
+		QCOMPARE(dmabuf_import_stats().created - before.created, uint64_t(3));
+		QCOMPARE(dmabuf_import_stats().destroyed - before.destroyed, uint64_t(2));
+		capture->clearImports();
+		QCOMPARE(dmabuf_import_stats().destroyed - before.destroyed, uint64_t(3));
 	}
 
 	void sceneAndPreviewVisibility()
@@ -737,6 +818,7 @@ class CaptureTest : public QObject
 	{
 		if (!live)
 			QSKIP("Opt-in test captures only its own temporary Wayland window.");
+		auto initialImports = dmabuf_import_stats();
 		auto makeWindow = [] {
 			auto w = std::make_unique<QWidget>(nullptr, Qt::FramelessWindowHint);
 			w->setWindowTitle("KWinCapture live check");
@@ -758,17 +840,30 @@ class CaptureTest : public QObject
 		auto pixel = renderedPixel(target);
 		QCOMPARE(pixel.alpha(), 255);
 		QVERIFY(pixel.red() > pixel.green());
+		auto resizeImports = dmabuf_import_stats();
+		window->setFixedSize(320, 180);
+		QTRY_COMPARE_WITH_TIMEOUT(obs_source_get_width(target), uint32_t(320), 5000);
+		QTRY_COMPARE_WITH_TIMEOUT(obs_source_get_height(target), uint32_t(180), 5000);
+		if (resizeImports.created > initialImports.created)
+			QTRY_VERIFY(dmabuf_import_stats().destroyed > resizeImports.destroyed);
+		QCOMPARE(renderedPixel(target).alpha(), 255);
 		uint32_t width = obs_source_get_width(target), height = obs_source_get_height(target);
 		window.reset();
 		QTRY_VERIFY_WITH_TIMEOUT(status(target) != "capturing", 3000);
 		QCOMPARE(renderedPixel(target).alpha(), 0);
 		QCOMPARE(obs_source_get_width(target), width);
 		QCOMPARE(obs_source_get_height(target), height);
+		QTRY_COMPARE(dmabuf_import_stats().created - initialImports.created,
+			     dmabuf_import_stats().destroyed - initialImports.destroyed);
 		window = makeWindow();
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
+		QCOMPARE(obs_source_get_width(target), uint32_t(160));
+		QCOMPARE(obs_source_get_height(target), uint32_t(90));
 		QCOMPARE(renderedPixel(target).alpha(), 255);
 		window.reset();
 		QTRY_VERIFY(status(target) != "capturing");
+		QTRY_COMPARE(dmabuf_import_stats().created - initialImports.created,
+			     dmabuf_import_stats().destroyed - initialImports.destroyed);
 	}
 
 	void liveImportFailureFallsBackToCpu()
@@ -783,20 +878,27 @@ class CaptureTest : public QObject
 		      public:
 			std::shared_ptr<DmaBufCapture> delegate;
 			std::atomic<int> rejected{0};
+			std::atomic<bool> rejectNext{false};
 			explicit RejectImport(std::shared_ptr<DmaBufCapture> gpu) : delegate(std::move(gpu))
 			{
 				formats = delegate->formats;
 				explicitSync = delegate->explicitSync;
 			}
-			FrameResult copy(const spa_buffer &buffer, const spa_video_info_raw &, VideoFrame &) override
+			FrameResult copy(const spa_buffer &buffer, const spa_video_info_raw &format,
+					 VideoFrame &output) override
 			{
+				if (!rejectNext)
+					return delegate->copy(buffer, format, output);
 				++rejected;
 				delegate->discard(buffer);
 				return FrameResult::UnmappedBuffer;
 			}
 			void discard(const spa_buffer &buffer) override { delegate->discard(buffer); }
+			void removeBuffer(const spa_buffer &buffer) override { delegate->removeBuffer(buffer); }
+			void clearImports() override { delegate->clearImports(); }
 		};
 		auto reject = std::make_shared<RejectImport>(gpu);
+		auto initialImports = dmabuf_import_stats();
 		QWidget window;
 		window.setWindowTitle("KWinCapture fallback check");
 		window.setFixedSize(160, 90);
@@ -811,7 +913,13 @@ class CaptureTest : public QObject
 		config.rule.appId = "kwincapture-test";
 		state->configure(config);
 		queue_capture_update(state);
+		QTRY_COMPARE_WITH_TIMEOUT(state->frames->mode(), FrameBuffer::Mode::DmaBuf, 8000);
+		QVERIFY(dmabuf_import_stats().created > initialImports.created);
+		reject->rejectNext = true;
+		window.setStyleSheet("background-color: rgb(32, 128, 224)");
 		QTRY_COMPARE_WITH_TIMEOUT(state->frames->mode(), FrameBuffer::Mode::Cpu, 12000);
+		QCOMPARE(dmabuf_import_stats().created - initialImports.created,
+			 dmabuf_import_stats().destroyed - initialImports.destroyed);
 		QVERIFY(reject->rejected.load() > 0);
 		VideoFrame frame;
 		QCOMPARE(state->frames->take(frame), FrameBuffer::Update::Updated);
@@ -832,6 +940,7 @@ class CaptureTest : public QObject
 	{
 		if (!live)
 			QSKIP("Opt-in test captures only its own temporary Wayland window.");
+		auto initialImports = dmabuf_import_stats();
 		class CountingImport : public DmaBufCapture
 		{
 		      public:
@@ -853,6 +962,8 @@ class CaptureTest : public QObject
 				++discards;
 				delegate->discard(buffer);
 			}
+			void removeBuffer(const spa_buffer &buffer) override { delegate->removeBuffer(buffer); }
+			void clearImports() override { delegate->clearImports(); }
 		};
 		QWidget window(nullptr, Qt::FramelessWindowHint);
 		window.setWindowTitle("KWinCapture hidden source check");
@@ -878,6 +989,8 @@ class CaptureTest : public QObject
 		state->setShowing(false);
 		queue_capture_update(state);
 		QTRY_COMPARE(state->diagnostics().status, CaptureStatus::Paused);
+		QCOMPARE(dmabuf_import_stats().created - initialImports.created,
+			 dmabuf_import_stats().destroyed - initialImports.destroyed);
 		auto sequence = state->frames->sequence();
 		auto copies = counter ? counter->copies.load() : 0;
 		auto discards = counter ? counter->discards.load() : 0;
@@ -1042,6 +1155,7 @@ class CaptureTest : public QObject
 			return count;
 		};
 		auto startFrames = frames();
+		auto startImports = dmabuf_import_stats();
 		draws = 0;
 		timespec startCpu{}, endCpu{};
 		clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &startCpu);
@@ -1052,10 +1166,14 @@ class CaptureTest : public QObject
 		clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &endCpu);
 		const double cpu = endCpu.tv_sec - startCpu.tv_sec + (endCpu.tv_nsec - startCpu.tv_nsec) / 1e9;
 		const auto captured = frames() - startFrames;
+		auto endImports = dmabuf_import_stats();
 		timer.stop();
 		calldata_t diagnostic{};
 		proc_handler_call(obs_source_get_proc_handler(target), "get_status", &diagnostic);
 		qInfo("BENCHMARK_PATH %s", calldata_bool(&diagnostic, "gpu") ? "dmabuf" : "cpu");
+		qInfo("BENCHMARK_IMPORTS created=%llu destroyed=%llu",
+		      (unsigned long long)(endImports.created - startImports.created),
+		      (unsigned long long)(endImports.destroyed - startImports.destroyed));
 		calldata_free(&diagnostic);
 		qInfo("BENCHMARK %dx%d seconds=%.3f frames=%lld capture_fps=%.2f draws=%d cpu_seconds=%.3f "
 		      "cpu_percent=%.2f cpu_ms_per_frame=%.3f",

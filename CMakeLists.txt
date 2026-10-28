@@ -124,7 +124,7 @@ if(KWINCAPTURE_BUILD_TESTS)
   add_test(NAME capture-controller COMMAND $<TARGET_FILE:capture-controller-tests>)
 
   add_executable(kwincapture-tests
-    tests/capture-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
+    tests/capture-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp tests/dmabuf-fixture.cpp
     ${OBS_SOURCES}
     ${TEST_PROTOCOL_HEADERS}
   )
@@ -132,6 +132,9 @@ if(KWINCAPTURE_BUILD_TESTS)
   target_compile_features(kwincapture-tests PRIVATE cxx_std_17)
   target_link_libraries(kwincapture-tests PRIVATE
     capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::WAYLAND_SERVER PkgConfig::DRM OpenGL::GL OpenGL::EGL
+  )
+  target_link_options(kwincapture-tests PRIVATE
+    "LINKER:--wrap=gs_texture_create_from_dmabuf" "LINKER:--wrap=gs_texture_destroy"
   )
   set_target_properties(kwincapture-tests PROPERTIES AUTOMOC ON)
   add_test(NAME obs-integration COMMAND $<TARGET_FILE:kwincapture-tests>)

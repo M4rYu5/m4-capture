@@ -178,7 +178,7 @@ QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-tests liveKW
 - `src/obs-capture.cpp`: OBS settings, persistence, logging, and focus-action callbacks.
 - `src/focus-order.cpp`: ordering items inside their existing containers.
 - `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
-- `src/obs-dmabuf.cpp`: GPU buffer import, synchronization and GPU crop/rotation/flip rendering.
+- `src/obs-dmabuf.cpp`: cached GPU buffer imports, synchronization and GPU crop/rotation/flip rendering.
 - `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.
 - `src/kwincapture-source.cpp`: OBS properties, saved configuration, and rendering.
 
@@ -242,6 +242,13 @@ window independently of the 16 ms source-draw timer and profile a faster produce
 `--baseline /path/to/binary`
 also measures a preserved pre-change benchmark executable. See
 [the performance notes](docs/capture-performance.md) for measured results and scope.
+
+`BENCHMARK_IMPORTS` in the raw logs reports imports created and destroyed during
+the measurement window. A stable DMA-BUF buffer pool should reuse its imports
+after warm-up. Imports are released on buffer removal, format changes, CPU
+fallback, or stream teardown (including hiding the source).
+See [the import-cache measurements](docs/dmabuf-import-cache-performance.md) for
+the production cache comparison.
 
 For a short frame-rate diagnostic across an OBS output-rate change, run:
 

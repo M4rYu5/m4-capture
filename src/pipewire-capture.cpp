@@ -28,6 +28,8 @@ PipeWireCapture::~PipeWireCapture()
 	stopping = true;
 	if (stream)
 		pw_stream_destroy(stream);
+	if (gpu)
+		gpu->clearImports();
 	if (registry)
 		pw_proxy_destroy(reinterpret_cast<pw_proxy *>(registry));
 	if (core)
@@ -89,6 +91,7 @@ bool PipeWireCapture::start(int fd, uint32_t node, const QString &serial)
 		events.state_changed = onState;
 		events.param_changed = onParam;
 		events.process = onProcess;
+		events.remove_buffer = onRemoveBuffer;
 		return events;
 	}();
 	pw_stream_add_listener(stream, &streamListener, &streamEvents, this);
@@ -151,6 +154,8 @@ std::vector<const spa_pod *> PipeWireCapture::buildFormats(spa_pod_builder &buil
 void PipeWireCapture::fallbackToCpu()
 {
 	disableGpu();
+	if (gpu)
+		gpu->clearImports();
 	cpuOnly = true;
 	frames->clear();
 	std::array<uint8_t, 65536> storage;
@@ -167,6 +172,8 @@ void PipeWireCapture::fail(const QString &message)
 	if (stopping || failedOnce)
 		return;
 	failedOnce = true;
+	if (gpu)
+		gpu->clearImports();
 	frames->clear();
 	failed(message);
 }
@@ -206,6 +213,8 @@ void PipeWireCapture::onParam(void *data, uint32_t id, const spa_pod *param)
 
 void PipeWireCapture::formatChanged(const spa_pod *param)
 {
+	if (gpu)
+		gpu->clearImports();
 	format = {};
 	frames->clear();
 	changed(PipeWireStatus::Connecting);
@@ -249,6 +258,13 @@ void PipeWireCapture::formatChanged(const spa_pod *param)
 }
 
 void PipeWireCapture::onProcess(void *data) { static_cast<PipeWireCapture *>(data)->process(); }
+
+void PipeWireCapture::onRemoveBuffer(void *data, pw_buffer *buffer)
+{
+	auto self = static_cast<PipeWireCapture *>(data);
+	if (self->gpu)
+		self->gpu->removeBuffer(*buffer->buffer);
+}
 
 void PipeWireCapture::process()
 {
