@@ -85,17 +85,27 @@ The installer targets native OBS (`/usr/bin/obs`), not Flatpak OBS.
 
 ## Install and update
 
-Close OBS, then run from this folder:
+Close OBS, then choose a build mode. For development with debug symbols:
 
 ```sh
-./scripts/dev.sh install
+./scripts/install.sh --debug
 ```
 
-After source changes, close OBS and run:
+For an optimized release build:
 
 ```sh
-./scripts/dev.sh update
+./scripts/install.sh --release
 ```
+
+For an optimized build with debug symbols, useful for profiling:
+
+```sh
+./scripts/install.sh --relwithdebinfo
+```
+
+A build mode is required; running without one reports an error. Run the same
+command after source changes to update the plugin. Each mode uses a separate
+build directory: `build-debug`, `build-release`, or `build-relwithdebinfo`.
 
 Reopen OBS to load the replacement library. Existing sources keep their source ID
 (`waylandconnect_source`). Native plugins are not hot-reloaded. The script refuses
@@ -115,9 +125,15 @@ Installed files:
 ```
 
 `XDG_CONFIG_HOME` is respected. `KWINCAPTURE_PLUGIN_DIR` overrides the individual
-plugin directory; `KWINCAPTURE_BUILD_DIR` overrides the build directory.
-Compile without installing with `./scripts/dev.sh build`. Builds include debug
-symbols. Launch `obs --verbose`, or `gdb --args obs --verbose`, for debugging.
+plugin directory; `KWINCAPTURE_BUILD_DIR` overrides the chosen build directory.
+Compile without installing with:
+
+```sh
+cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug --parallel
+```
+
+Launch `obs --verbose`, or `gdb --args obs --verbose`, for debugging a Debug build.
 OBS's current log contains `[KWinCapture]` messages.
 
 To remove the plugin, close OBS and remove its individual plugin directory.
