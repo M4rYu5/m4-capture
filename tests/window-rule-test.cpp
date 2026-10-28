@@ -29,6 +29,13 @@ class WindowRuleTest : public QObject
 		rule.title = "[";
 		QVERIFY(!rule.error().isEmpty());
 		QVERIFY(!rule.matches(one));
+		rule.title = "^my.*editor$";
+		QVERIFY(rule.error().isEmpty());
+		QVERIFY(rule.matches(one));
+		rule.caseSensitive = true;
+		QVERIFY(!rule.matches(one));
+		rule.caseSensitive = false;
+		QVERIFY(rule.matches(one));
 		rule.title.clear();
 		QVERIFY(rule.matches(one));
 		bool ambiguous;

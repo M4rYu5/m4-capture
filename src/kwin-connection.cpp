@@ -130,6 +130,7 @@ void KWinConnection::close()
 		stream->invalidate(message.isEmpty() ? QStringLiteral("The KWin Wayland connection closed.") : message);
 	}
 	entries.clear();
+	windowSnapshot.clear();
 	if (management)
 		wl_proxy_destroy(reinterpret_cast<wl_proxy *>(management));
 	if (screencast)
@@ -154,16 +155,7 @@ void KWinConnection::disconnected(const QString &reason)
 
 bool KWinConnection::available() const { return initialized && management && screencast; }
 
-QList<WindowInfo> KWinConnection::windows() const
-{
-	QList<WindowInfo> result;
-	if (!available())
-		return result;
-	for (const auto &[uuid, window] : entries)
-		if (window->ready && window->mapped && !window->info.appId.isEmpty())
-			result.append(window->info);
-	return result;
-}
+QList<WindowInfo> KWinConnection::windows() const { return windowSnapshot; }
 
 void KWinConnection::flush()
 {
@@ -195,6 +187,12 @@ void KWinConnection::notify()
 	notificationPending = true;
 	QTimer::singleShot(0, this, [this] {
 		notificationPending = false;
+		QList<WindowInfo> result;
+		if (available())
+			for (const auto &[uuid, window] : entries)
+				if (window->ready && window->mapped && !window->info.appId.isEmpty())
+					result.append(window->info);
+		windowSnapshot = std::move(result);
 		emit changed();
 	});
 }

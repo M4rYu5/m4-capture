@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QRegularExpression>
 #include <QString>
 
 struct WindowInfo {
@@ -13,6 +14,7 @@ struct WindowInfo {
 enum class TitleMatch { Contains, Exact, Wildcard, Regex };
 
 struct WindowRule {
+	WindowRule(QString appId = {}, QString title = {});
 	QString appId;
 	QString title;
 	TitleMatch mode = TitleMatch::Contains;
@@ -20,6 +22,13 @@ struct WindowRule {
 	bool disconnectOnTitleMismatch = true;
 	bool matches(const WindowInfo &window) const;
 	QString error() const;
+
+      private:
+	const QRegularExpression &expression() const;
+	mutable QRegularExpression compiledExpression;
+	mutable QString compiledTitle;
+	mutable TitleMatch compiledMode = TitleMatch::Contains;
+	mutable bool compiledCaseSensitive = false;
 };
 
 // Keep a live selection through title changes unless continuous title matching is enabled.

@@ -82,6 +82,30 @@ class CaptureControllerTest : public QObject
 		QCOMPARE(kwin.requestedWindow, QString("arriving"));
 	}
 
+	void windowSnapshotsAreSharedAndRetained()
+	{
+		KWinConnection backend(nullptr);
+		kwin.add({"snapshot", "test.app", "Editor", false});
+		QTRY_COMPARE(backend.windows().size(), 1);
+		const auto original = backend.windows();
+		const auto shared = backend.windows();
+		QCOMPARE(original.constData(), shared.constData());
+		kwin.title("snapshot", "Changed");
+		QTRY_COMPARE(backend.windows().front().title, QString("Changed"));
+		const auto changed = backend.windows();
+		QCOMPARE(changed.constData(), backend.windows().constData());
+		QCOMPARE(original.front().title, QString("Editor"));
+		QCOMPARE(shared.front().title, QString("Editor"));
+		kwin.focus("snapshot");
+		QTRY_VERIFY(backend.windows().front().active);
+		QVERIFY(!changed.front().active);
+		kwin.add({"second", "test.app", "Second", false});
+		QTRY_COMPARE(backend.windows().size(), 2);
+		kwin.remove("snapshot");
+		QTRY_COMPARE(backend.windows().size(), 1);
+		QCOMPARE(backend.windows().front().uuid, QString("second"));
+	}
+
 	void pipewireNotifiesImportLifetime()
 	{
 		class ImportLifetime : public DmaBufCapture

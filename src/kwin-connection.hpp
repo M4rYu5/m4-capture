@@ -50,6 +50,7 @@ class KWinConnection : public QObject
       private:
 	struct Window;
 	std::map<QString, std::unique_ptr<Window>> entries;
+	QList<WindowInfo> windowSnapshot;
 	// Proxies are invalidated before their display, even if wrappers outlive us.
 	QSet<KWinStream *> streams;
 	wl_display *display = nullptr;
