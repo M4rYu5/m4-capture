@@ -44,7 +44,7 @@ VideoLayout video_layout(const spa_buffer &buffer, const spa_video_info_raw &for
 	return {x, y, width, height, rotation, flip};
 }
 
-FrameResult convert_video_frame(const spa_buffer &buffer, const spa_video_info_raw &format, VideoFrame &output)
+FrameResult copy_video_frame(const spa_buffer &buffer, const spa_video_info_raw &format, VideoFrame &output)
 {
 	if (!supported_video_format(format))
 		return FrameResult::UnsupportedFormat;
@@ -62,40 +62,14 @@ FrameResult convert_video_frame(const spa_buffer &buffer, const spa_video_info_r
 	output.width = (rotation & 1) ? height : width;
 	output.height = (rotation & 1) ? width : height;
 	output.gpu.reset();
-	output.pixels.resize(size_t(output.width) * output.height * 4);
-	bool rgb = format.format == SPA_VIDEO_FORMAT_RGBA || format.format == SPA_VIDEO_FORMAT_RGBx;
-	bool opaque = format.format == SPA_VIDEO_FORMAT_BGRx || format.format == SPA_VIDEO_FORMAT_RGBx;
+	output.layout = {0, 0, width, height, rotation, flip};
+	output.format = format.format;
+	output.pixels.resize(size_t(width) * height * 4);
 	auto bytes = static_cast<const uint8_t *>(plane.data);
 	for (uint32_t row = 0; row < height; ++row) {
 		auto input = bytes + plane.chunk->offset + int64_t(y + row) * stride + x * 4;
-		if (!rotation && !flip && !rgb) {
-			auto destination = output.pixels.data() + size_t(row) * width * 4;
-			std::memcpy(destination, input, size_t(width) * 4);
-			if (opaque)
-				for (size_t alpha = 3; alpha < size_t(width) * 4; alpha += 4)
-					destination[alpha] = 255;
-			continue;
-		}
-		for (uint32_t column = 0; column < width; ++column) {
-			uint32_t cx = flip ? width - 1 - column : column;
-			uint32_t dx = cx, dy = row;
-			if (rotation == 1) {
-				dx = row;
-				dy = width - 1 - cx;
-			} else if (rotation == 2) {
-				dx = width - 1 - cx;
-				dy = height - 1 - row;
-			} else if (rotation == 3) {
-				dx = height - 1 - row;
-				dy = cx;
-			}
-			auto pixel = input + column * 4;
-			auto destination = output.pixels.data() + (size_t(dy) * output.width + dx) * 4;
-			destination[0] = pixel[rgb ? 2 : 0];
-			destination[1] = pixel[1];
-			destination[2] = pixel[rgb ? 0 : 2];
-			destination[3] = opaque ? 255 : pixel[3];
-		}
+		auto destination = output.pixels.data() + size_t(row) * width * 4;
+		std::memcpy(destination, input, size_t(width) * 4);
 	}
 	return FrameResult::Ready;
 }

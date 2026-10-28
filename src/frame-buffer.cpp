@@ -15,6 +15,8 @@ bool FrameBuffer::publish(VideoFrame &frame)
 	latest.gpu.swap(frame.gpu);
 	latest.width = frame.width;
 	latest.height = frame.height;
+	latest.layout = frame.layout;
+	latest.format = frame.format;
 	available = true;
 	dirty = true;
 	++published;
@@ -32,6 +34,8 @@ FrameBuffer::Update FrameBuffer::take(VideoFrame &frame)
 	frame.gpu.swap(latest.gpu);
 	frame.width = latest.width;
 	frame.height = latest.height;
+	frame.layout = latest.layout;
+	frame.format = latest.format;
 	dirty = false;
 	return Update::Updated;
 }

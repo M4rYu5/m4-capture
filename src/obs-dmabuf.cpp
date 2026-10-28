@@ -1,4 +1,5 @@
 #include "obs-dmabuf.hpp"
+#include "obs-video.hpp"
 
 #include <GL/gl.h>
 #include <QtGlobal>
@@ -204,34 +205,8 @@ class ObsDmaBufCapture : public DmaBufCapture
 		// Copy encoded color values, preserving premultiplied alpha. The source
 		// render performs the same sRGB conversion as the CPU upload path.
 		gs_effect_set_texture(gs_effect_get_param_by_name(effect, "image"), texture);
-		while (gs_effect_loop(effect, "Draw")) {
-			// Reuse OBS's immediate vertex buffer for the four-vertex quad.
-			gs_render_start(false);
-			for (auto corner : {std::pair{0u, 0u}, std::pair{layout.width, 0u},
-					    std::pair{0u, layout.height}, std::pair{layout.width, layout.height}}) {
-				auto [x, y] = corner;
-				uint32_t cx = layout.flip ? layout.width - x : x;
-				uint32_t dx = cx, dy = y;
-				switch (layout.rotation) {
-				case 1:
-					dx = y;
-					dy = layout.width - cx;
-					break;
-				case 2:
-					dx = layout.width - cx;
-					dy = layout.height - y;
-					break;
-				case 3:
-					dx = layout.height - y;
-					dy = cx;
-					break;
-				}
-				gs_vertex2f(dx, dy);
-				gs_texcoord(float(layout.x + x) / format.size.width,
-					    float(layout.y + y) / format.size.height, 0);
-			}
-			gs_render_stop(GS_TRISTRIP);
-		}
+		while (gs_effect_loop(effect, "Draw"))
+			draw_video_texture(texture, layout);
 		release.used = true;
 		gs_matrix_pop();
 		gs_projection_pop();
@@ -240,6 +215,8 @@ class ObsDmaBufCapture : public DmaBufCapture
 		gs_texrender_end(frame->target);
 		output.width = layout.outputWidth();
 		output.height = layout.outputHeight();
+		output.layout = {0, 0, output.width, output.height};
+		output.format = SPA_VIDEO_FORMAT_BGRA;
 		output.pixels.clear();
 		output.gpu = std::move(frame);
 		return FrameResult::Ready;

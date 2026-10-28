@@ -56,6 +56,7 @@ set(OBS_SOURCES
   src/focus-order.cpp
   src/kwincapture-source.cpp
   src/obs-dmabuf.cpp src/obs-dmabuf.hpp
+  src/obs-video.cpp src/obs-video.hpp
 )
 add_library(kwincapture MODULE src/plugin.cpp ${OBS_SOURCES})
 target_link_libraries(kwincapture PRIVATE

@@ -292,7 +292,7 @@ void PipeWireCapture::process()
 				result = gpu->copy(*latest->buffer, format, scratch);
 			}
 		} else {
-			result = convert_video_frame(*latest->buffer, format, scratch);
+			result = copy_video_frame(*latest->buffer, format, scratch);
 		}
 		if (isDmaBuf && result != FrameResult::Ready && result != FrameResult::Empty) {
 			fallback = true;

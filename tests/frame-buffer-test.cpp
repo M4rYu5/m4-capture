@@ -70,6 +70,34 @@ class FrameBufferTest : public QObject
 		QCOMPARE(buffer.mode(), FrameBuffer::Mode::None);
 	}
 
+	void nativeMetadataFollowsPixels()
+	{
+		FrameBuffer buffer;
+		VideoFrame input{{1, 2, 3, 4}, 2, 3};
+		input.layout = {0, 0, 3, 2, 1, true};
+		input.format = SPA_VIDEO_FORMAT_RGBx;
+		QVERIFY(buffer.publish(input));
+		VideoFrame output;
+		QCOMPARE(buffer.take(output), FrameBuffer::Update::Updated);
+		QCOMPARE(output.layout.width, 3u);
+		QCOMPARE(output.layout.height, 2u);
+		QCOMPARE(output.layout.rotation, 1u);
+		QVERIFY(output.layout.flip);
+		QCOMPARE(output.format, SPA_VIDEO_FORMAT_RGBx);
+		// A same-size format/transform change must replace the whole frame.
+		input.pixels = {5, 6, 7, 8};
+		input.layout = {0, 0, 2, 3};
+		input.format = SPA_VIDEO_FORMAT_BGRA;
+		QVERIFY(!buffer.publish(input));
+		QCOMPARE(buffer.take(output), FrameBuffer::Update::Updated);
+		QCOMPARE(output.pixels, (std::vector<uint8_t>{5, 6, 7, 8}));
+		QCOMPARE(output.layout.width, 2u);
+		QCOMPARE(output.layout.height, 3u);
+		QCOMPARE(output.layout.rotation, 0u);
+		QVERIFY(!output.layout.flip);
+		QCOMPARE(output.format, SPA_VIDEO_FORMAT_BGRA);
+	}
+
 	void disabledBufferRejectsInFlightFrames()
 	{
 		FrameBuffer buffer;

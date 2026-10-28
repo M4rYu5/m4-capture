@@ -2,6 +2,8 @@
 #include "kwin-fixture.hpp"
 #include "obs-capture.hpp"
 #include "obs-dmabuf.hpp"
+#include "obs-video.hpp"
+#include "pixel-fixture.hpp"
 #include "video-fixture.hpp"
 #include <QScopeGuard>
 
@@ -100,6 +102,37 @@ class CaptureTest : public QObject
 			}
 			gs_stagesurface_destroy(stage);
 		}
+		obs_leave_graphics();
+		return pixels;
+	}
+	QByteArray rendererPixels(ObsVideoRenderer &renderer, const VideoFrame &frame, bool updated = true)
+	{
+		obs_enter_graphics();
+		auto target = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
+		auto stage = gs_stagesurface_create(frame.width, frame.height, GS_BGRA);
+		QByteArray pixels;
+		if (gs_texrender_begin(target, frame.width, frame.height)) {
+			gs_projection_push();
+			gs_matrix_push();
+			gs_matrix_identity();
+			gs_ortho(0, frame.width, 0, frame.height, -100, 100);
+			vec4 clear{};
+			gs_clear(GS_CLEAR_COLOR, &clear, 0, 0);
+			renderer.render(frame, updated);
+			gs_matrix_pop();
+			gs_projection_pop();
+			gs_texrender_end(target);
+			gs_stage_texture(stage, gs_texrender_get_texture(target));
+			uint8_t *bytes = nullptr;
+			uint32_t stride = 0;
+			if (gs_stagesurface_map(stage, &bytes, &stride)) {
+				for (uint32_t y = 0; y < frame.height; ++y)
+					pixels.append(reinterpret_cast<char *>(bytes + y * stride), frame.width * 4);
+				gs_stagesurface_unmap(stage);
+			}
+		}
+		gs_stagesurface_destroy(stage);
+		gs_texrender_destroy(target);
 		obs_leave_graphics();
 		return pixels;
 	}
@@ -651,14 +684,116 @@ class CaptureTest : public QObject
 		buffer.datas = &plane;
 		auto format = input.format;
 		format.format = opaque ? SPA_VIDEO_FORMAT_BGRx : SPA_VIDEO_FORMAT_BGRA;
-		VideoFrame expected, actual;
-		QCOMPARE(convert_video_frame(buffer, format, expected), FrameResult::Ready);
+		auto expected = reference_video_pixels(buffer, format);
+		auto layout = video_layout(buffer, format);
+		VideoFrame actual;
 		QCOMPARE(capture->copy(input.buffer, input.format, actual), FrameResult::Ready);
-		QCOMPARE(actual.width, expected.width);
-		QCOMPARE(actual.height, expected.height);
+		QCOMPARE(actual.width, layout.outputWidth());
+		QCOMPARE(actual.height, layout.outputHeight());
 		QVERIFY(actual.pixels.empty());
-		QCOMPARE(gpuPixels(actual),
-			 QByteArray(reinterpret_cast<const char *>(expected.pixels.data()), expected.pixels.size()));
+		QCOMPARE(gpuPixels(actual), expected);
+	}
+
+	void cpuFramesRenderNatively_data()
+	{
+		QTest::addColumn<int>("format");
+		QTest::addColumn<uint32_t>("transform");
+		QTest::addColumn<bool>("crop");
+		QTest::addColumn<bool>("bottomUp");
+		for (auto format :
+		     {SPA_VIDEO_FORMAT_BGRA, SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_RGBA, SPA_VIDEO_FORMAT_RGBx})
+			for (uint32_t transform = 0; transform < 8; ++transform)
+				for (bool crop : {false, true})
+					for (bool bottomUp : {false, true})
+						QTest::newRow(qPrintable(QString("%1-transform%2-crop%3-bottomUp%4")
+									     .arg(format)
+									     .arg(transform)
+									     .arg(crop)
+									     .arg(bottomUp)))
+						    << int(format) << transform << crop << bottomUp;
+	}
+
+	void cpuFramesRenderNatively()
+	{
+		QFETCH(int, format);
+		QFETCH(uint32_t, transform);
+		QFETCH(bool, crop);
+		QFETCH(bool, bottomUp);
+		PixelFixture input(5, 3);
+		input.format.format = static_cast<spa_video_format>(format);
+		input.transform.transform = transform;
+		if (crop)
+			input.crop.region = {{1, 1}, {3, 2}};
+		// Mix transparent, translucent, and fully opaque pixels, plus arbitrary x bytes.
+		for (size_t i = 0; i < input.bytes.size(); i += 4) {
+			if (i % 12 == 0)
+				std::fill_n(input.bytes.data() + i, 4, 0);
+			else if (i % 12 == 4)
+				input.bytes[i + 3] = 255;
+		}
+		std::vector<uint8_t> padded(82, 0);
+		for (size_t row = 0; row < 3; ++row)
+			std::copy_n(input.bytes.data() + row * 20, 20, padded.data() + 1 + row * 27);
+		input.plane.data = padded.data();
+		input.plane.maxsize = padded.size();
+		input.chunk.offset = bottomUp ? 55 : 1;
+		input.chunk.stride = bottomUp ? -27 : 27;
+		input.chunk.size = 74;
+		auto expected = reference_video_pixels(input.buffer, input.format);
+		VideoFrame frame;
+		QCOMPARE(copy_video_frame(input.buffer, input.format, frame), FrameResult::Ready);
+		// PipeWire can immediately overwrite the input once the CPU copy is published.
+		std::fill(padded.begin(), padded.end(), 0);
+		FrameBuffer frames;
+		QVERIFY(frames.publish(frame));
+		VideoFrame output;
+		QCOMPARE(frames.take(output), FrameBuffer::Update::Updated);
+		ObsVideoRenderer renderer;
+		QCOMPARE(rendererPixels(renderer, output), expected);
+		QCOMPARE(frames.take(output), FrameBuffer::Update::Unchanged);
+		QCOMPARE(rendererPixels(renderer, output, false), expected);
+	}
+
+	void cpuFormatAndStorageChanges()
+	{
+		ObsVideoRenderer renderer;
+		VideoFrame frame;
+		// All have the same displayed size; texture format/storage dimensions differ.
+		for (auto format : {SPA_VIDEO_FORMAT_BGRA, SPA_VIDEO_FORMAT_RGBA, SPA_VIDEO_FORMAT_RGBx,
+				    SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_BGRA}) {
+			for (uint32_t transform : {0u, 1u, 2u, 3u}) {
+				PixelFixture input((transform & 1) ? 3 : 5, (transform & 1) ? 5 : 3);
+				input.format.format = format;
+				input.transform.transform = transform;
+				QCOMPARE(copy_video_frame(input.buffer, input.format, frame), FrameResult::Ready);
+				QCOMPARE(frame.width, 5u);
+				QCOMPARE(frame.height, 3u);
+				QCOMPARE(rendererPixels(renderer, frame),
+					 reference_video_pixels(input.buffer, input.format));
+			}
+		}
+	}
+
+	void rendererSwitchesBetweenCpuAndDmaBuf()
+	{
+		auto capture = create_obs_dmabuf_capture();
+		if (!capture)
+			QSKIP("GPU DMA-BUF import unavailable on this graphics backend.");
+		TestDmaBuf input;
+		if (!input.buffer.n_datas || !supported_video_format(input.format))
+			QSKIP("Driver cannot export the test texture as a supported DMA-BUF.");
+		ObsVideoRenderer renderer;
+		VideoFrame frame;
+		for (int round = 0; round < 2; ++round) {
+			QCOMPARE(capture->copy(input.buffer, input.format, frame), FrameResult::Ready);
+			QCOMPARE(rendererPixels(renderer, frame), gpuPixels(frame));
+			PixelFixture cpu(16, 16);
+			cpu.format.format = SPA_VIDEO_FORMAT_RGBx;
+			cpu.transform.transform = SPA_META_TRANSFORMATION_Flipped90;
+			QCOMPARE(copy_video_frame(cpu.buffer, cpu.format, frame), FrameResult::Ready);
+			QVERIFY(!frame.gpu);
+			QCOMPARE(rendererPixels(renderer, frame), reference_video_pixels(cpu.buffer, cpu.format));
+		}
 	}
 
 	void gpuImportCacheFollowsBufferLifetime()
@@ -1010,22 +1145,10 @@ class CaptureTest : public QObject
 		QTRY_VERIFY_WITH_TIMEOUT(state->frames->sequence() > sequence, 8000);
 		VideoFrame frame;
 		QCOMPARE(state->frames->take(frame), FrameBuffer::Update::Updated);
-		QColor pixel;
-		if (!frame.gpu) {
-			pixel = QColor(frame.pixels[2], frame.pixels[1], frame.pixels[0], frame.pixels[3]);
-		} else {
-			obs_enter_graphics();
-			auto stage = gs_stagesurface_create(frame.width, frame.height, GS_BGRA);
-			gs_stage_texture(stage, obs_frame_texture(frame));
-			uint8_t *bytes = nullptr;
-			uint32_t stride = 0;
-			if (gs_stagesurface_map(stage, &bytes, &stride)) {
-				pixel = QColor(bytes[2], bytes[1], bytes[0], bytes[3]);
-				gs_stagesurface_unmap(stage);
-			}
-			gs_stagesurface_destroy(stage);
-			obs_leave_graphics();
-		}
+		ObsVideoRenderer renderer;
+		auto pixels = rendererPixels(renderer, frame);
+		QCOMPARE(pixels.size(), qsizetype(frame.width) * frame.height * 4);
+		QColor pixel{uint8_t(pixels[2]), uint8_t(pixels[1]), uint8_t(pixels[0]), uint8_t(pixels[3])};
 		QVERIFY(pixel.isValid());
 		QCOMPARE(pixel.alpha(), 255);
 		QVERIFY(pixel.green() > pixel.red());

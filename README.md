@@ -178,7 +178,8 @@ QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-tests liveKW
 - `src/obs-capture.cpp`: OBS settings, persistence, logging, and focus-action callbacks.
 - `src/focus-order.cpp`: ordering items inside their existing containers.
 - `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
-- `src/obs-dmabuf.cpp`: cached GPU buffer imports, synchronization and GPU crop/rotation/flip rendering.
+- `src/obs-dmabuf.cpp`: cached GPU buffer imports and synchronization.
+- `src/obs-video.cpp`: native CPU texture uploads and shared crop/rotation/flip drawing.
 - `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.
 - `src/kwincapture-source.cpp`: OBS properties, saved configuration, and rendering.
 
@@ -219,9 +220,13 @@ uploads while keeping buffer reuse independent of OBS rendering.
 Explicit GPU acquire/release fences are negotiated when supported. With older
 producers using implicit synchronization, GPU reads finish before their buffers
 are returned. If GPU import is unavailable or fails, capture falls back to mapped
-shared-memory BGRA/RGBA conversion and upload. A failed GPU path stays disabled
-for that source's lifetime, including reconnections; recreating the source or
-restarting OBS tries GPU capture again. HDR remains unsupported.
+shared-memory capture and native BGRA/RGBA upload. CPU capture copies only the
+cropped rows into owned memory; OBS's normal texture draw handles rotation,
+flipping and opaque alpha. This uses the same basic graphics renderer as the
+previous CPU fallback and does not require DMA-BUF import or GPU compute.
+A failed GPU capture path stays disabled for that source's lifetime, including
+reconnections; recreating the source or restarting OBS tries GPU capture again.
+HDR remains unsupported.
 
 For diagnosis, launch OBS with `KWINCAPTURE_FORCE_CPU=1` to force the CPU path.
 Logs identify `DMA-BUF GPU capture` or `CPU fallback capture`.
@@ -240,15 +245,12 @@ median process CPU usage and prepared frame rates. The benchmark defaults to a
 override it. Set `KWINCAPTURE_BENCHMARK_ANIMATION_MS=2` to update the captured
 window independently of the 16 ms source-draw timer and profile a faster producer.
 `--baseline /path/to/binary`
-also measures a preserved pre-change benchmark executable. See
-[the performance notes](docs/capture-performance.md) for measured results and scope.
+also measures a preserved pre-change benchmark executable.
 
 `BENCHMARK_IMPORTS` in the raw logs reports imports created and destroyed during
 the measurement window. A stable DMA-BUF buffer pool should reuse its imports
 after warm-up. Imports are released on buffer removal, format changes, CPU
 fallback, or stream teardown (including hiding the source).
-See [the import-cache measurements](docs/dmabuf-import-cache-performance.md) for
-the production cache comparison.
 
 For a short frame-rate diagnostic across an OBS output-rate change, run:
 

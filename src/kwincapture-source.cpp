@@ -1,13 +1,12 @@
 #include "obs-capture.hpp"
-#include "obs-dmabuf.hpp"
+#include "obs-video.hpp"
 #include <obs-module.h>
 
 struct WaylandSource {
 	std::shared_ptr<CaptureState> state;
 	OBSWeakSource source;
 	VideoFrame uploadFrame;
-	gs_texture_t *texture = nullptr;
-	uint32_t textureWidth = 0, textureHeight = 0;
+	ObsVideoRenderer renderer;
 };
 
 static const char *sourceName(void *) { return obs_module_text("Source.Name"); }
@@ -45,11 +44,6 @@ static void sourceDestroy(void *opaque)
 {
 	auto data = static_cast<WaylandSource *>(opaque);
 	release_capture(data->state);
-	if (data->texture) {
-		obs_enter_graphics();
-		gs_texture_destroy(data->texture);
-		obs_leave_graphics();
-	}
 	delete data;
 }
 
@@ -180,35 +174,7 @@ static void sourceRender(void *opaque, gs_effect_t *)
 	auto update = state->frames->take(data->uploadFrame);
 	if (update == FrameBuffer::Update::Empty)
 		return;
-	auto width = data->uploadFrame.width;
-	auto height = data->uploadFrame.height;
-	auto texture = obs_frame_texture(data->uploadFrame);
-	bool upload = update == FrameBuffer::Update::Updated;
-	if (!texture && (!data->texture || data->textureWidth != width || data->textureHeight != height)) {
-		gs_texture_destroy(data->texture);
-		data->texture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, GS_DYNAMIC);
-		data->textureWidth = width;
-		data->textureHeight = height;
-		upload = true;
-	}
-	if (!texture)
-		texture = data->texture;
-	if (!texture)
-		return;
-	if (upload && !data->uploadFrame.gpu)
-		gs_texture_set_image(data->texture, data->uploadFrame.pixels.data(), width * 4, false);
-
-	auto effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-	bool previous = gs_framebuffer_srgb_enabled();
-	// KWin pixels are premultiplied; do not apply alpha to their colors again.
-	gs_blend_state_push();
-	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
-	gs_enable_framebuffer_srgb(true);
-	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"), texture);
-	while (gs_effect_loop(effect, "Draw"))
-		gs_draw_sprite(texture, 0, width, height);
-	gs_enable_framebuffer_srgb(previous);
-	gs_blend_state_pop();
+	data->renderer.render(data->uploadFrame, update == FrameBuffer::Update::Updated);
 }
 
 void register_kwincapture_source()
