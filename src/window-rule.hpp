@@ -17,7 +17,7 @@ struct WindowRule {
 	QString title;
 	TitleMatch mode = TitleMatch::Contains;
 	bool caseSensitive = false;
-	bool disconnectOnTitleMismatch = false;
+	bool disconnectOnTitleMismatch = true;
 	bool matches(const WindowInfo &window) const;
 	QString error() const;
 };

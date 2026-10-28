@@ -151,13 +151,13 @@ class CaptureTest : public QObject
 		QVERIFY(!obs_properties_get(props, "auto_start"));
 		QVERIFY(!obs_properties_get(props, "auto_reconnect"));
 		QVERIFY(obs_properties_get(props, "disconnect_on_title_mismatch"));
-		QVERIFY(!obs_data_get_bool(settings, "disconnect_on_title_mismatch"));
+		QVERIFY(obs_data_get_bool(settings, "disconnect_on_title_mismatch"));
 		obs_data_set_string(settings, "selected_window", "pick");
 		QVERIFY(obs_property_modified(picker, settings));
 		QCOMPARE(QString(obs_data_get_string(settings, "app_id")), QString("test.app"));
 		obs_data_set_string(settings, "title_filter", "title");
 		obs_data_set_bool(settings, "capture_cursor", false);
-		obs_data_set_bool(settings, "disconnect_on_title_mismatch", true);
+		obs_data_set_bool(settings, "disconnect_on_title_mismatch", false);
 		obs_source_update(target, settings);
 		obs_properties_destroy(props);
 		QTest::qWait(80);
@@ -167,7 +167,7 @@ class CaptureTest : public QObject
 		QCOMPARE(QString(obs_data_get_string(config, "title_filter")), QString("title"));
 		QVERIFY(obs_data_get_bool(config, "raise_on_focus"));
 		QVERIFY(!obs_data_get_bool(config, "capture_cursor"));
-		QVERIFY(obs_data_get_bool(config, "disconnect_on_title_mismatch"));
+		QVERIFY(!obs_data_get_bool(config, "disconnect_on_title_mismatch"));
 	}
 
 	void focusRaisesInsideEachContainerOnly()

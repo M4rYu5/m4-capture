@@ -37,6 +37,7 @@ class WindowRuleTest : public QObject
 		QVERIFY(ambiguous);
 		QCOMPARE(select_window({one, two}, rule, {}, "one", &ambiguous), QString("one"));
 		rule.title = "does not match";
+		rule.disconnectOnTitleMismatch = false;
 		QCOMPARE(select_window({one, two}, rule, "one", {}, &ambiguous), QString("one"));
 		QCOMPARE(select_window({two}, rule, "one", {}, &ambiguous), QString());
 		rule.disconnectOnTitleMismatch = true;

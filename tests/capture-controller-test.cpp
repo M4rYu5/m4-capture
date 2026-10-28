@@ -151,7 +151,7 @@ class CaptureControllerTest : public QObject
 			config.rule.caseSensitive = true;
 			break;
 		case 5:
-			config.rule.disconnectOnTitleMismatch = true;
+			config.rule.disconnectOnTitleMismatch = !config.rule.disconnectOnTitleMismatch;
 			break;
 		case 6:
 			config.cursor = false;
