@@ -76,7 +76,9 @@ static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, o
 		return false;
 	for (const auto &window : capture_windows())
 		if (window.uuid == uuid) {
-			if (window.appId != QString::fromUtf8(obs_data_get_string(settings, "app_id")))
+			auto rule = read_capture_config(settings).rule;
+			rule.appId = window.appId;
+			if (!rule.matches(window))
 				obs_data_set_string(settings, "title_filter", "");
 			obs_data_set_string(settings, "app_id", window.appId.toUtf8().constData());
 			return true;

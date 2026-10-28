@@ -170,6 +170,49 @@ class CaptureTest : public QObject
 		QVERIFY(!obs_data_get_bool(config, "disconnect_on_title_mismatch"));
 	}
 
+	void choosingWindowReconcilesTitleFilter_data()
+	{
+		QTest::addColumn<bool>("differentApp");
+		QTest::addColumn<bool>("filterMatches");
+		QTest::newRow("same-app-compatible") << false << true;
+		QTest::newRow("same-app-conflicting") << false << false;
+		QTest::newRow("other-app-compatible") << true << true;
+		QTest::newRow("other-app-conflicting") << true << false;
+	}
+
+	void choosingWindowReconcilesTitleFilter()
+	{
+		QFETCH(bool, differentApp);
+		QFETCH(bool, filterMatches);
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		kwin.add({"original", "test.app", "Editor", false});
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		obs_data_set_string(settings, "selected_window", "original");
+		obs_data_set_string(settings, "title_filter", "Editor");
+		OBSSourceAutoRelease target =
+		    obs_source_create("waylandconnect_source", "Window selection", settings, nullptr);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		int requests = kwin.captureRequests;
+		auto appId = differentApp ? "other.app" : "test.app";
+		kwin.add({"chosen", appId, filterMatches ? "Editor - Other" : "Other", false});
+		QTRY_COMPARE(capture_windows().size(), 2);
+		auto props = obs_source_properties(target);
+		obs_data_set_string(settings, "selected_window", "chosen");
+		bool modified = obs_property_modified(obs_properties_get(props, "selected_window"), settings);
+		obs_source_update(target, settings);
+		obs_properties_destroy(props);
+		QVERIFY(modified);
+		QCOMPARE(QString(obs_data_get_string(settings, "app_id")), QString(appId));
+		QCOMPARE(QString(obs_data_get_string(settings, "title_filter")),
+			 filterMatches ? QString("Editor") : QString());
+		QTRY_COMPARE(kwin.requestedWindow, QString("chosen"));
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(renderedPixel(target).alpha(), 255);
+	}
+
 	void focusRaisesInsideEachContainerOnly()
 	{
 		QWidget window;
