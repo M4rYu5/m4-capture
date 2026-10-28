@@ -5,6 +5,8 @@ FrameBuffer::FrameBuffer(uint32_t width, uint32_t height) : latest{{}, width, he
 bool FrameBuffer::publish(VideoFrame &frame)
 {
 	std::lock_guard<std::mutex> lock(mutex);
+	if (!enabled)
+		return false;
 	auto nextMode = frame.gpu ? Mode::DmaBuf : Mode::Cpu;
 	bool changed =
 	    !available || latest.width != frame.width || latest.height != frame.height || captureMode != nextMode;
@@ -61,4 +63,23 @@ FrameBuffer::Mode FrameBuffer::mode() const
 {
 	std::lock_guard<std::mutex> lock(mutex);
 	return !available ? Mode::None : captureMode;
+}
+
+bool FrameBuffer::isEnabled() const
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	return enabled;
+}
+
+void FrameBuffer::setEnabled(bool next)
+{
+	std::shared_ptr<GpuFrame> retired;
+	std::lock_guard<std::mutex> lock(mutex);
+	enabled = next;
+	if (!enabled) {
+		available = false;
+		dirty = false;
+		latest.pixels.clear();
+		retired.swap(latest.gpu);
+	}
 }

@@ -33,6 +33,7 @@ static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
 	auto data = new WaylandSource;
 	data->source = OBSGetWeakRef(source);
 	data->state = create_obs_capture_state(source, settings);
+	data->state->setShowing(false);
 	sourceUpdate(data, settings);
 	auto handler = obs_source_get_proc_handler(source);
 	proc_handler_add(handler, "void get_status(out string status, out bool busy, out int frames, out bool gpu)",
@@ -53,6 +54,20 @@ static void sourceDestroy(void *opaque)
 }
 
 static void sourceDefaults(obs_data_t *settings) { set_capture_defaults(settings); }
+
+static void sourceShow(void *opaque)
+{
+	auto state = static_cast<WaylandSource *>(opaque)->state;
+	state->setShowing(true);
+	queue_capture_update(state);
+}
+
+static void sourceHide(void *opaque)
+{
+	auto state = static_cast<WaylandSource *>(opaque)->state;
+	state->setShowing(false);
+	queue_capture_update(state);
+}
 
 static void sourceSave(void *opaque, obs_data_t *settings)
 {
@@ -213,6 +228,8 @@ void register_kwincapture_source()
 	info.get_width = sourceWidth;
 	info.get_height = sourceHeight;
 	info.video_render = sourceRender;
+	info.show = sourceShow;
+	info.hide = sourceHide;
 	info.icon_type = OBS_ICON_TYPE_WINDOW_CAPTURE;
 	obs_register_source(&info);
 }

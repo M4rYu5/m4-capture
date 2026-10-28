@@ -69,6 +69,26 @@ class FrameBufferTest : public QObject
 		buffer.clear();
 		QCOMPARE(buffer.mode(), FrameBuffer::Mode::None);
 	}
+
+	void disabledBufferRejectsInFlightFrames()
+	{
+		FrameBuffer buffer;
+		VideoFrame input{{1, 2, 3, 4}, 1, 1};
+		QVERIFY(buffer.publish(input));
+		auto sequence = buffer.sequence();
+		buffer.setEnabled(false);
+		input = {{5, 6, 7, 8}, 1, 1};
+		QVERIFY(!buffer.publish(input));
+		QCOMPARE(buffer.sequence(), sequence);
+		VideoFrame output;
+		QCOMPARE(buffer.take(output), FrameBuffer::Update::Empty);
+		QCOMPARE(buffer.mode(), FrameBuffer::Mode::None);
+		buffer.setEnabled(true);
+		QCOMPARE(buffer.take(output), FrameBuffer::Update::Empty);
+		QVERIFY(buffer.publish(input));
+		QCOMPARE(buffer.take(output), FrameBuffer::Update::Updated);
+		QCOMPARE(output.pixels, (std::vector<uint8_t>{5, 6, 7, 8}));
+	}
 };
 
 QTEST_GUILESS_MAIN(FrameBufferTest)

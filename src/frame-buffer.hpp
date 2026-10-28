@@ -24,11 +24,15 @@ class FrameBuffer
 	Size size() const;
 	uint64_t sequence() const;
 	Mode mode() const;
+	// Disabling clears cached video and rejects in-flight publications.
+	bool isEnabled() const;
+	void setEnabled(bool enabled);
 
       private:
 	mutable std::mutex mutex;
 	VideoFrame latest;
 	bool available = false;
+	bool enabled = true;
 	bool dirty = false;
 	uint64_t published = 0;
 	Mode captureMode = Mode::None;

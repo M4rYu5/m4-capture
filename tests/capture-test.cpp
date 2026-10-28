@@ -29,6 +29,18 @@ class CaptureTest : public QObject
 	Q_OBJECT
 	KWinFixture kwin;
 	bool live = qEnvironmentVariableIsSet("KWINCAPTURE_LIVE_TEST");
+	std::vector<OBSWeakSource> shownSources;
+
+	obs_source_t *createSource(const char *name, obs_data_t *settings, bool showing = true)
+	{
+		auto source = obs_source_create("waylandconnect_source", name, settings, nullptr);
+		if (source && showing) {
+			// Model a properties preview for tests that render a standalone source.
+			obs_source_inc_showing(source);
+			shownSources.emplace_back(OBSGetWeakRef(source));
+		}
+		return source;
+	}
 
 	QString status(obs_source_t *source)
 	{
@@ -43,7 +55,7 @@ class CaptureTest : public QObject
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "app_id", app);
 		obs_data_set_bool(settings, "raise_on_focus", raise);
-		return obs_source_create("waylandconnect_source", name, settings, nullptr);
+		return createSource(name, settings);
 	}
 	QColor renderedPixel(obs_source_t *source)
 	{
@@ -94,6 +106,10 @@ class CaptureTest : public QObject
 	}
 	void cleanup()
 	{
+		for (const auto &weak : shownSources)
+			if (auto source = OBSGetStrongRef(weak))
+				obs_source_dec_showing(source);
+		shownSources.clear();
 		mainWindow = nullptr;
 		currentScene = nullptr;
 		// OBS 32 canvases own public scenes/groups in addition to our test refs.
@@ -197,8 +213,7 @@ class CaptureTest : public QObject
 		obs_data_set_string(settings, "app_id", "test.app");
 		obs_data_set_string(settings, "selected_window", "original");
 		obs_data_set_string(settings, "title_filter", "Editor");
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "Window selection", settings, nullptr);
+		OBSSourceAutoRelease target = createSource("Window selection", settings);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		int requests = kwin.captureRequests;
 		auto appId = differentApp ? "other.app" : "test.app";
@@ -353,8 +368,7 @@ class CaptureTest : public QObject
 		obs_data_set_string(settings, "app_id", "test.app");
 		obs_data_set_bool(settings, "auto_start", false);
 		obs_data_set_bool(settings, "auto_reconnect", false);
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "Legacy settings", settings, nullptr);
+		OBSSourceAutoRelease target = createSource("Legacy settings", settings);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		kwin.remove("original");
 		QTRY_COMPARE(status(target), QString("waiting"));
@@ -376,8 +390,7 @@ class CaptureTest : public QObject
 		kwin.add({"original", "test.app", "Original", false});
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "app_id", "test.app");
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "Select after stop", settings, nullptr);
+		OBSSourceAutoRelease target = createSource("Select after stop", settings);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		kwin.remove("original");
 		QTRY_COMPARE(status(target), QString("waiting"));
@@ -413,8 +426,7 @@ class CaptureTest : public QObject
 		obs_data_set_string(settings, "selected_window", "editor");
 		obs_data_set_string(settings, "title_filter", "Editor");
 		obs_data_set_bool(settings, "disconnect_on_title_mismatch", enabled);
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "Title matching", settings, nullptr);
+		OBSSourceAutoRelease target = createSource("Title matching", settings);
 		QTRY_COMPARE(status(target), QString("waiting"));
 		kwin.title("editor", "Editor");
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
@@ -453,8 +465,7 @@ class CaptureTest : public QObject
 		obs_data_set_string(settings, "app_id", "test.app");
 		obs_data_set_string(settings, "title_filter", "Editor");
 		obs_data_set_bool(settings, "disconnect_on_title_mismatch", true);
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "Alternate window", settings, nullptr);
+		OBSSourceAutoRelease target = createSource("Alternate window", settings);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		kwin.add({"other", "test.app", "Editor two", false});
 		QTRY_COMPARE(capture_windows().size(), 2);
@@ -484,8 +495,7 @@ class CaptureTest : public QObject
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "app_id", "test.app");
 		obs_data_set_string(settings, "selected_window", preferred.toUtf8().constData());
-		OBSSourceAutoRelease target =
-		    obs_source_create("waylandconnect_source", "Cursor toggle", settings, nullptr);
+		OBSSourceAutoRelease target = createSource("Cursor toggle", settings);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		kwin.add({"other", "test.app", "Second", false});
 		QTRY_COMPARE(capture_windows().size(), 2);
@@ -647,6 +657,82 @@ class CaptureTest : public QObject
 			 QByteArray(reinterpret_cast<const char *>(expected.pixels.data()), expected.pixels.size()));
 	}
 
+	void sceneAndPreviewVisibility()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		kwin.add({"visible", "test.app", "Visibility target", false});
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		OBSSourceAutoRelease target = createSource("Visibility", settings, false);
+		OBSSceneAutoRelease scene = obs_scene_create("Visibility scene");
+		auto sceneSource = obs_scene_get_source(scene);
+		auto item = obs_scene_add(scene, target);
+		QTRY_COMPARE(status(target), QString("paused"));
+		int requests = kwin.captureRequests;
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+
+		obs_source_inc_active(sceneSource);
+		auto deactivate = qScopeGuard([&] { obs_source_dec_active(sceneSource); });
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(renderedPixel(target).alpha(), 255);
+		obs_sceneitem_set_visible(item, false);
+		// Apply OBS's deferred scene-item visibility bookkeeping.
+		renderedPixel(sceneSource);
+		QTRY_COMPARE(status(target), QString("paused"));
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+
+		// Properties previews count even when the scene item is hidden.
+		obs_source_inc_showing(target);
+		obs_source_inc_showing(target);
+		int previews = 2;
+		auto closePreviews = qScopeGuard([&] {
+			while (previews > 0) {
+				obs_source_dec_showing(target);
+				--previews;
+			}
+		});
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		obs_source_dec_showing(target);
+		--previews;
+		QTest::qWait(100);
+		QCOMPARE(status(target), QString("capturing"));
+		QCOMPARE(renderedPixel(target).alpha(), 255);
+		obs_source_dec_showing(target);
+		--previews;
+		QTRY_COMPARE(status(target), QString("paused"));
+		obs_sceneitem_set_visible(item, true);
+		renderedPixel(sceneSource);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		obs_source_dec_active(sceneSource);
+		deactivate.dismiss();
+		QTRY_COMPARE(status(target), QString("paused"));
+	}
+
+	void hiddenSourceTracksReplacementAndResumes()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		kwin.add({"original", "test.app", "Original", false});
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		int requests = kwin.captureRequests;
+		OBSSourceAutoRelease target = createSource("Hidden tracking", settings, false);
+		QTRY_COMPARE(status(target), QString("paused"));
+		kwin.remove("original");
+		QTRY_COMPARE(status(target), QString("waiting"));
+		kwin.add({"replacement", "test.app", "Replacement", false});
+		QTRY_COMPARE(status(target), QString("paused"));
+		QCOMPARE(kwin.captureRequests, requests);
+		obs_source_inc_showing(target);
+		auto hide = qScopeGuard([&] { obs_source_dec_showing(target); });
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.requestedWindow, QString("replacement"));
+		QCOMPARE(renderedPixel(target).alpha(), 255);
+	}
+
 	void liveKWinCapture()
 	{
 		if (!live)
@@ -740,6 +826,96 @@ class CaptureTest : public QObject
 		QTRY_VERIFY_WITH_TIMEOUT(state->frames->sequence() > sequence, 5000);
 		QCOMPARE(state->frames->mode(), FrameBuffer::Mode::Cpu);
 		QCOMPARE(reject->rejected.load(), rejected);
+	}
+
+	void liveHiddenCapture()
+	{
+		if (!live)
+			QSKIP("Opt-in test captures only its own temporary Wayland window.");
+		class CountingImport : public DmaBufCapture
+		{
+		      public:
+			std::shared_ptr<DmaBufCapture> delegate;
+			std::atomic<uint64_t> copies{0}, discards{0};
+			explicit CountingImport(std::shared_ptr<DmaBufCapture> gpu) : delegate(std::move(gpu))
+			{
+				formats = delegate->formats;
+				explicitSync = delegate->explicitSync;
+			}
+			FrameResult copy(const spa_buffer &buffer, const spa_video_info_raw &format,
+					 VideoFrame &output) override
+			{
+				++copies;
+				return delegate->copy(buffer, format, output);
+			}
+			void discard(const spa_buffer &buffer) override
+			{
+				++discards;
+				delegate->discard(buffer);
+			}
+		};
+		QWidget window(nullptr, Qt::FramelessWindowHint);
+		window.setWindowTitle("KWinCapture hidden source check");
+		window.setFixedSize(160, 90);
+		window.setStyleSheet("background-color: rgb(220, 40, 80)");
+		window.show();
+		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
+		auto gpu = create_obs_dmabuf_capture();
+		auto counter = gpu ? std::make_shared<CountingImport>(gpu) : nullptr;
+		CaptureCallbacks callbacks;
+		callbacks.gpu = counter;
+		auto state = std::make_shared<CaptureState>(160, 90, callbacks);
+		auto cleanup = qScopeGuard([&] { release_capture(state); });
+		CaptureConfig config;
+		config.rule.appId = "kwincapture-test";
+		state->configure(config);
+		queue_capture_update(state);
+		QTRY_COMPARE_WITH_TIMEOUT(state->diagnostics().status, CaptureStatus::Capturing, 8000);
+		if (counter) {
+			QCOMPARE(state->frames->mode(), FrameBuffer::Mode::DmaBuf);
+			QVERIFY(counter->copies.load() > 0);
+		}
+		state->setShowing(false);
+		queue_capture_update(state);
+		QTRY_COMPARE(state->diagnostics().status, CaptureStatus::Paused);
+		auto sequence = state->frames->sequence();
+		auto copies = counter ? counter->copies.load() : 0;
+		auto discards = counter ? counter->discards.load() : 0;
+		// Repeated compositor updates while hidden must not perform capture work.
+		for (int i = 0; i < 10; ++i) {
+			window.setStyleSheet(QString("background-color: rgb(40, %1, 80)").arg(210 + i));
+			QTest::qWait(30);
+		}
+		QCOMPARE(state->frames->sequence(), sequence);
+		if (counter) {
+			QCOMPARE(counter->copies.load(), copies);
+			QCOMPARE(counter->discards.load(), discards);
+		}
+		// The window is now static. Reopening must still deliver its new green frame.
+		state->setShowing(true);
+		queue_capture_update(state);
+		QTRY_VERIFY_WITH_TIMEOUT(state->frames->sequence() > sequence, 8000);
+		VideoFrame frame;
+		QCOMPARE(state->frames->take(frame), FrameBuffer::Update::Updated);
+		QColor pixel;
+		if (!frame.gpu) {
+			pixel = QColor(frame.pixels[2], frame.pixels[1], frame.pixels[0], frame.pixels[3]);
+		} else {
+			obs_enter_graphics();
+			auto stage = gs_stagesurface_create(frame.width, frame.height, GS_BGRA);
+			gs_stage_texture(stage, obs_frame_texture(frame));
+			uint8_t *bytes = nullptr;
+			uint32_t stride = 0;
+			if (gs_stagesurface_map(stage, &bytes, &stride)) {
+				pixel = QColor(bytes[2], bytes[1], bytes[0], bytes[3]);
+				gs_stagesurface_unmap(stage);
+			}
+			gs_stagesurface_destroy(stage);
+			obs_leave_graphics();
+		}
+		QVERIFY(pixel.isValid());
+		QCOMPARE(pixel.alpha(), 255);
+		QVERIFY(pixel.green() > pixel.red());
 	}
 
 	void liveFrameRateProfile()

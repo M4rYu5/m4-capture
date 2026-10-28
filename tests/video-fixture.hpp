@@ -23,6 +23,7 @@ class TestVideo
 	// Starts video and configures the simulated compositor to expose it.
 	bool startCapture(KWinFixture &kwin);
 	bool setProducerActive(bool active);
+	void setColor(uint32_t color) { bgra = color; }
 	void stopProducer();
 	int openRemote() const;
 	uint32_t nodeId() const { return producerNode.load(); }
@@ -30,7 +31,7 @@ class TestVideo
 	QString socketPath() const;
 
       private:
-	const uint32_t bgra;
+	std::atomic<uint32_t> bgra;
 	QTemporaryDir directory;
 	QProcess daemon;
 	const QByteArray originalRemote = qgetenv("PIPEWIRE_REMOTE");

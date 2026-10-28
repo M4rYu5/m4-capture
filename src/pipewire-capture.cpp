@@ -265,7 +265,7 @@ void PipeWireCapture::process()
 	if (!latest)
 		return;
 	bool fallback = false;
-	if (!failedOnce && format.size.width && format.size.height) {
+	if (frames->isEnabled() && !failedOnce && format.size.width && format.size.height) {
 		bool isDmaBuf = latest->buffer->n_datas && latest->buffer->datas[0].type == SPA_DATA_DmaBuf;
 		FrameResult result;
 		if (isDmaBuf && gpu) {

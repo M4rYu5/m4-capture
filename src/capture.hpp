@@ -54,6 +54,8 @@ class CaptureState
 	void configure(const CaptureConfig &config);
 	CaptureConfig configuration() const;
 	CaptureDiagnostics diagnostics() const;
+	void setShowing(bool showing);
+	bool isShowing() const;
 	bool isAlive() const { return alive.load(); }
 	const std::shared_ptr<FrameBuffer> frames;
 
@@ -64,6 +66,7 @@ class CaptureState
 	mutable std::mutex mutex;
 	CaptureConfig config;
 	CaptureDiagnostics diagnostic;
+	bool showing = true;
 	std::atomic<bool> alive{true};
 	const CaptureCallbacks callbacks;
 	// Only accessed by the controller and runtime on the Qt UI thread.

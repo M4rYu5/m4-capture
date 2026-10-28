@@ -267,6 +267,72 @@ class CaptureControllerTest : public QObject
 		controller.reset();
 	}
 
+	void hiddenCaptureRequiresFreshFrames()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		kwin.add({"visibility", "test.app", "Visibility", false});
+		auto target = capture();
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		VideoFrame frame;
+		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Updated);
+		auto oldPixels = frame.pixels;
+		target->setShowing(false);
+		queue_capture_update(target);
+		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Empty);
+		QTRY_COMPARE(status(target), QString("paused"));
+		auto sequence = target->frames->sequence();
+		int requests = kwin.captureRequests;
+		QTest::qWait(150);
+		QCOMPARE(target->frames->sequence(), sequence);
+		QVERIFY(video.setProducerActive(false));
+		video.setColor(0xff20c040u);
+		target->setShowing(true);
+		queue_capture_update(target);
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QTest::qWait(100);
+		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Empty);
+		QCOMPARE(target->frames->sequence(), sequence);
+		QVERIFY(video.setProducerActive(true));
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Updated);
+		QVERIFY(frame.pixels != oldPixels);
+		// A queued update must not collapse a rapid hide/show into old-stream reuse.
+		requests = kwin.captureRequests;
+		target->setShowing(false);
+		target->setShowing(true);
+		queue_capture_update(target);
+		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Empty);
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+	}
+
+	void hiddenCaptureRetainsBackendTrackingWithoutRetries()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		kwin.reject = true;
+		kwin.add({"retry-hidden", "test.app", "Hidden retry", false});
+		auto target = capture();
+		QTRY_COMPARE(status(target), QString("failed"));
+		target->setShowing(false);
+		queue_capture_update(target);
+		QTRY_COMPARE(status(target), QString("paused"));
+		int requests = kwin.captureRequests;
+		kwin.reject = false;
+		QTest::qWait(2200);
+		QCOMPARE(kwin.captureRequests, requests);
+		kwin.disconnectClients();
+		QTRY_VERIFY_WITH_TIMEOUT(capture_windows().isEmpty(), 1000);
+		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
+		QTRY_COMPARE(status(target), QString("paused"));
+		QCOMPARE(kwin.captureRequests, requests);
+		target->setShowing(true);
+		queue_capture_update(target);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.captureRequests, requests + 1);
+	}
+
 	void pausedStreamResumesWithoutReselecting()
 	{
 		TestVideo video;

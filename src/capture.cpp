@@ -36,6 +36,24 @@ CaptureDiagnostics CaptureState::diagnostics() const
 	return diagnostic;
 }
 
+void CaptureState::setShowing(bool next)
+{
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		showing = next;
+	}
+	// Disable publication immediately, including any copy already in flight.
+	// Only the controller re-enables frames, after joining the old stream.
+	if (!next)
+		frames->setEnabled(false);
+}
+
+bool CaptureState::isShowing() const
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	return showing;
+}
+
 void CaptureState::setStatus(CaptureStatus next, const QString &detail)
 {
 	std::lock_guard<std::mutex> lock(mutex);
@@ -144,6 +162,20 @@ void KWinCapture::reconcile()
 		stopStream();
 		return;
 	}
+	const bool showing = state->isShowing();
+	if (!showing) {
+		retry.stop();
+		if (stream)
+			stopStream();
+	} else if (!state->frames->isEnabled()) {
+		// A hide/show pair can arrive before this queued update. Always retire
+		// the old producer before allowing publication or rendering again.
+		stopStream();
+		retry.stop();
+		std::lock_guard<std::mutex> lock(state->mutex);
+		if (state->showing)
+			state->frames->setEnabled(true);
+	}
 	if (config.rule.appId.isEmpty()) {
 		status(CaptureStatus::Idle, QStringLiteral("Choose a window or enter its application ID."));
 		return;
@@ -180,6 +212,10 @@ void KWinCapture::reconcile()
 	for (const auto &window : windows)
 		if (window.uuid == currentWindowUuid)
 			focused(window);
+	if (!showing) {
+		status(CaptureStatus::Paused);
+		return;
+	}
 	if (!stream && !retry.isActive())
 		startStream();
 }
@@ -207,7 +243,7 @@ void KWinCapture::startStream()
 
 void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &serial)
 {
-	if (generation != attempt || !state->isAlive())
+	if (generation != attempt || !state->isAlive() || !state->isShowing())
 		return;
 	pipewire = std::make_unique<PipeWireCapture>(
 	    state->frames,
@@ -235,7 +271,7 @@ void KWinCapture::streamFailed(uint64_t attempt, const QString &error)
 
 void KWinCapture::streamStatusChanged(uint64_t attempt, PipeWireStatus next)
 {
-	if (generation != attempt || !state->isAlive())
+	if (generation != attempt || !state->isAlive() || !state->isShowing())
 		return;
 	switch (next) {
 	case PipeWireStatus::Connecting:
@@ -259,7 +295,8 @@ void KWinCapture::failed(const QString &error)
 	if (state->callbacks.error)
 		state->callbacks.error(error);
 	persist();
-	retry.start();
+	if (state->isShowing())
+		retry.start();
 }
 
 void KWinCapture::persist()

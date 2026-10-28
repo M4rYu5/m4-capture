@@ -187,17 +187,21 @@ The frame buffer has its own synchronization; controller ownership and callbacks
 stay on the Qt UI thread. Callbacks hold weak OBS references, so they do not keep
 removed sources alive.
 
-The controller always captures or waits for a matching target while its source exists:
+The controller tracks matching windows while its source exists and captures only
+while OBS considers it showing. Scene previews, properties previews and projectors
+count as showing even when the source is absent from the program output.
 
 | Event | Transition |
 | --- | --- |
-| Startup | Wait for a unique target, then connect. |
+| Startup | Track a unique target; connect when showing. |
+| Last view or preview closes | Clear video, close the capture stream and cancel capture retries; keep window tracking. |
+| A view or preview opens | Start a new stream for the current target and wait for a fresh frame. |
 | First frame | Connecting → Capturing. |
 | Stream pauses | Capturing → Paused; clear video and retain the selected window. |
 | Frames resume | Paused → Capturing without choosing another target. |
 | Target disappears, or an enforced title filter fails | Clear video and wait for a matching target. |
-| Stream failure | Failed; retry after two seconds. |
-| A window or application is selected | Start a new capture attempt. |
+| Stream failure | Failed; retry after two seconds while showing. |
+| A window or application is selected | Re-evaluate the target; start capture if showing. |
 | Application ID is cleared | Idle; clear video until a target is configured. |
 | Source is removed | Release capture and cancel retries. |
 
