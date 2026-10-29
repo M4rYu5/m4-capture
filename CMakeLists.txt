@@ -12,6 +12,7 @@ if(libobs_VERSION VERSION_LESS 32)
 endif()
 find_package(obs-frontend-api REQUIRED CONFIG)
 find_package(Qt6 REQUIRED COMPONENTS Core)
+find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.2)
 pkg_check_modules(DRM REQUIRED IMPORTED_TARGET libdrm)
@@ -36,6 +37,7 @@ set(CAPTURE_SOURCES
   src/capture-runtime.cpp
   src/kwin-connection.cpp src/kwin-connection.hpp
   src/pipewire-capture.cpp src/pipewire-capture.hpp
+  src/pipewire-audio.cpp src/pipewire-audio.hpp
   src/video-frame.cpp src/video-frame.hpp
   src/frame-buffer.cpp src/frame-buffer.hpp
   src/window-rule.cpp src/window-rule.hpp
@@ -44,7 +46,7 @@ set(CAPTURE_SOURCES
 
 add_library(capture-core STATIC ${CAPTURE_SOURCES})
 target_include_directories(capture-core PUBLIC src PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(capture-core PUBLIC Qt6::Core PkgConfig::PIPEWIRE PkgConfig::WAYLAND)
+target_link_libraries(capture-core PUBLIC Qt6::Core Threads::Threads PkgConfig::PIPEWIRE PkgConfig::WAYLAND)
 target_compile_features(capture-core PUBLIC cxx_std_17)
 target_compile_options(capture-core PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(capture-core PROPERTIES
@@ -119,7 +121,7 @@ if(KWINCAPTURE_BUILD_TESTS)
     list(APPEND TEST_PROTOCOL_HEADERS "${HEADER}")
   endforeach()
   add_executable(capture-controller-tests
-    tests/capture-controller-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
+    tests/capture-controller-test.cpp tests/video-fixture.cpp tests/audio-fixture.cpp tests/kwin-fixture.cpp
     ${TEST_PROTOCOL_HEADERS}
   )
   target_include_directories(capture-controller-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -127,6 +129,16 @@ if(KWINCAPTURE_BUILD_TESTS)
   target_compile_options(capture-controller-tests PRIVATE -Wall -Wextra -Wpedantic)
   set_target_properties(capture-controller-tests PROPERTIES AUTOMOC ON)
   add_test(NAME capture-controller COMMAND $<TARGET_FILE:capture-controller-tests>)
+
+  add_executable(pipewire-audio-tests
+    tests/pipewire-audio-test.cpp tests/audio-fixture.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
+    ${TEST_PROTOCOL_HEADERS}
+  )
+  target_include_directories(pipewire-audio-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(pipewire-audio-tests PRIVATE capture-core Qt6::Test PkgConfig::WAYLAND_SERVER)
+  target_compile_options(pipewire-audio-tests PRIVATE -Wall -Wextra -Wpedantic)
+  set_target_properties(pipewire-audio-tests PROPERTIES AUTOMOC ON)
+  add_test(NAME pipewire-audio COMMAND $<TARGET_FILE:pipewire-audio-tests>)
 
   add_library(obs-test-support STATIC
     tests/obs-test-fixture.cpp tests/obs-test-fixture.hpp tests/dmabuf-fixture.cpp
@@ -143,7 +155,7 @@ if(KWINCAPTURE_BUILD_TESTS)
   set_target_properties(obs-test-support PROPERTIES AUTOMOC ON)
 
   add_executable(kwincapture-tests
-    tests/capture-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
+    tests/capture-test.cpp tests/video-fixture.cpp tests/audio-fixture.cpp tests/kwin-fixture.cpp
     ${TEST_PROTOCOL_HEADERS}
   )
   target_include_directories(kwincapture-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")

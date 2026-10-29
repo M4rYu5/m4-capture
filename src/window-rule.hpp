@@ -3,12 +3,14 @@
 #include <QList>
 #include <QRegularExpression>
 #include <QString>
+#include <cstdint>
 
 struct WindowInfo {
 	QString uuid;
 	QString appId;
 	QString title;
 	bool active = false;
+	uint32_t pid = 0;
 };
 
 enum class TitleMatch { Contains, Exact, Wildcard, Regex };

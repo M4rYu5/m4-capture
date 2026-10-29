@@ -29,6 +29,7 @@ class TestVideo
 	uint32_t nodeId() const { return producerNode.load(); }
 	uint64_t serial() const { return producerSerial.load(); }
 	QString socketPath() const;
+	uint32_t audioCapturesCreated() const { return audioCaptures.load(); }
 
       private:
 	std::atomic<uint32_t> bgra;
@@ -46,6 +47,7 @@ class TestVideo
 	spa_hook streamListener{};
 	std::atomic<uint32_t> producerNode{PW_ID_ANY};
 	std::atomic<uint64_t> producerSerial{0};
+	std::atomic<uint32_t> audioCaptures{0};
 	std::map<uint32_t, std::string> nodes;
 	std::map<uint32_t, std::pair<uint32_t, bool>> ports;
 	std::vector<pw_proxy *> links;

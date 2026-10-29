@@ -28,6 +28,7 @@ Properties include:
 | Case sensitive | Off by default. |
 | Disconnect when title no longer matches | Off by default; require the captured window to keep matching the title filter. |
 | Capture cursor | On by default; include the pointer in the video. |
+| Capture application audio | Off by default; include the selected application's playback through PipeWire. |
 | Move to top when focused | Off by default; raise the source item within its current scene/group. |
 
 By default, the title filter is used to find a target. Once connected, title and
@@ -46,6 +47,22 @@ matching window is available, including after OBS startup or a window reopening.
 Stream errors retry after two seconds; normal waiting reacts to KWin window events
 without repeated capture requests. Old saved startup/reconnection switches are
 ignored and removed when the source is saved.
+
+Enable **Capture application audio** to include playback in the same OBS source.
+The source appears in the OBS audio mixer only while this option is enabled.
+The plugin matches PipeWire playback streams by the selected window's process
+(including child processes), application ID, or executable/application name when
+no ID is available. Audio can include other windows or browser tabs belonging to
+the same application; the title filter does not isolate their sound. Applications
+must play through PipeWire, directly or through its PulseAudio/ALSA/JACK support.
+Unmatched streams remain silent; the plugin never falls back to desktop audio.
+
+Playback continues through your speakers or headphones. Matching streams are
+mixed to stereo, including mono and standard surround channels. Audio follows
+source visibility and window selection, reconnects when playback streams return,
+and retries PipeWire errors independently of video. Disable overlapping OBS
+desktop audio capture to avoid recording the same sound twice. Audio/video sync
+offsets can be adjusted in OBS Advanced Audio Properties if needed.
 
 ## Move to top when focused
 
@@ -184,6 +201,7 @@ QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-live-tests l
 - `src/obs-capture.cpp`: OBS settings, persistence, logging, and focus-action callbacks.
 - `src/focus-order.cpp`: ordering items inside their existing containers.
 - `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
+- `src/pipewire-audio.cpp`: application playback discovery, capture links and stereo mixing.
 - `src/obs-dmabuf.cpp`: cached GPU buffer imports and synchronization.
 - `src/obs-video.cpp`: native CPU texture uploads and shared crop/rotation/flip drawing.
 - `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.

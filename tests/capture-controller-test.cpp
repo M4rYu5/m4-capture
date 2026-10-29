@@ -1,3 +1,4 @@
+#include "audio-fixture.hpp"
 #include "capture.hpp"
 #include "kwin-connection.hpp"
 #include "kwin-fixture.hpp"
@@ -365,6 +366,63 @@ class CaptureControllerTest : public QObject
 		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Empty);
 		QTRY_COMPARE(kwin.captureRequests, requests + 1);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+	}
+
+	void audioSurvivesVideoRestarts()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		TestAudio producer;
+		QVERIFY(producer.start(video.openRemote(), "test.app"));
+		kwin.add({"audio", "test.app", "Application audio", false});
+		KWinConnection backend(nullptr);
+		QTRY_COMPARE(backend.windows().size(), 1);
+		std::atomic<uint64_t> samples{0};
+		CaptureCallbacks callbacks;
+		callbacks.audio = [&](const AudioFrame &frame) {
+			if (frame.data[0][0] == .125f)
+				++samples;
+		};
+		auto target = std::make_shared<CaptureState>(160, 90, std::move(callbacks));
+		CaptureConfig config;
+		config.rule.appId = "test.app";
+		config.audio = true;
+		target->configure(config);
+		KWinCapture controller(target, &backend, nullptr);
+		controller.update();
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QTRY_VERIFY(samples.load() > 0);
+		QTRY_COMPARE(video.audioCapturesCreated(), uint32_t(1));
+
+		int requests = kwin.captureRequests;
+		config.cursor = false;
+		target->configure(config);
+		controller.update();
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QTRY_COMPARE(status(target), QString("capturing"));
+		QCOMPARE(video.audioCapturesCreated(), uint32_t(1));
+
+		kwin.reject = true;
+		config.cursor = true;
+		target->configure(config);
+		controller.update();
+		QTRY_COMPARE(status(target), QString("failed"));
+		auto count = samples.load();
+		QTest::qWait(150);
+		QVERIFY(samples.load() > count);
+		QCOMPARE(video.audioCapturesCreated(), uint32_t(1));
+		requests = kwin.captureRequests;
+		kwin.reject = false;
+		QTRY_COMPARE_WITH_TIMEOUT(kwin.captureRequests, requests + 1, 3500);
+		QTRY_COMPARE(status(target), QString("capturing"));
+		QCOMPARE(video.audioCapturesCreated(), uint32_t(1));
+
+		// Collapsed hide/show updates still discard queued audio from the old producer.
+		target->setShowing(false);
+		target->setShowing(true);
+		controller.update();
+		QTRY_COMPARE(video.audioCapturesCreated(), uint32_t(2));
+		QTRY_COMPARE(status(target), QString("capturing"));
 	}
 
 	void hiddenCaptureRetainsBackendTrackingWithoutRetries()

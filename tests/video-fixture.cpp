@@ -187,6 +187,8 @@ void TestVideo::global(void *data, uint32_t id, uint32_t, const char *type, uint
 	if (std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
 		auto name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
 		self->nodes[id] = name ? name : "";
+		if (self->nodes[id] == "KWinCapture Audio")
+			++self->audioCaptures;
 		if (self->nodes[id] == "wc-test-video") {
 			auto serial = spa_dict_lookup(props, PW_KEY_OBJECT_SERIAL);
 			self->producerSerial = serial ? std::stoull(serial) : 0;
