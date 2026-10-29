@@ -162,11 +162,17 @@ The `obs-integration` tests exercise settings, cursor modes, rendering, and
 focus-driven ordering in real OBS scenes/groups. They use simulated capture
 servers and the running Wayland session to initialize libobs graphics.
 
-An opt-in live test captures only its own temporary window, closes it, and opens
-a replacement to check real KWin reconnection:
+The separate `kwincapture-live-tests` executable contains real KWin capture tests,
+frame-rate diagnostics, and the performance benchmark. It requires KDE Plasma
+Wayland and `KWINCAPTURE_LIVE_TEST=1`; it is built with the test targets but is not
+part of the default CTest run. `kwincapture-tests` always uses simulated capture
+servers, regardless of that environment variable.
+
+The live reconnection test captures only its own temporary window, closes it,
+and opens a replacement:
 
 ```sh
-QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-tests liveKWinCapture
+QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-live-tests liveKWinCapture
 ```
 
 ## Implementation
@@ -235,11 +241,13 @@ The opt-in benchmark captures its own animated window at 1920×1080 and 3840×21
 with two seconds of warm-up and ten seconds of measurement per sample:
 
 ```sh
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DKWINCAPTURE_BUILD_TESTS=ON
+cmake --build build-release --target kwincapture-live-tests --parallel
 python3 scripts/benchmark-capture.py --runs 3
 ```
 
-Build the Release integration tests first. The script compares DMA-BUF and
-forced CPU fallback, saves raw logs and JSON under `build-release/`, and reports
+The script runs `kwincapture-live-tests` to compare DMA-BUF and forced CPU fallback,
+saves raw logs and JSON under `build-release/`, and reports
 median process CPU usage and prepared frame rates. The benchmark defaults to a
 60 fps OBS output clock; `KWINCAPTURE_TEST_FPS_NUM` and `KWINCAPTURE_TEST_FPS_DEN`
 override it. Set `KWINCAPTURE_BENCHMARK_ANIMATION_MS=2` to update the captured
@@ -255,7 +263,7 @@ fallback, or stream teardown (including hiding the source).
 For a short frame-rate diagnostic across an OBS output-rate change, run:
 
 ```sh
-QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build-release/kwincapture-tests liveFrameRateProfile
+QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build-release/kwincapture-live-tests liveFrameRateProfile
 ```
 
 This logs prepared frames/s at two output rates without enforcing a capture FPS

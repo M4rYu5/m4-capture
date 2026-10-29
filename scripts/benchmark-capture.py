@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare real KWin capture using the opt-in OBS integration benchmark."""
+"""Compare real KWin capture using the opt-in live capture benchmark."""
 
 import argparse
 import json
@@ -10,7 +10,7 @@ import statistics
 import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--binary", type=Path, default=Path("build-release/kwincapture-tests"))
+parser.add_argument("--binary", type=Path, default=Path("build-release/kwincapture-live-tests"))
 parser.add_argument("--baseline", type=Path, help="Preserved pre-change benchmark executable")
 parser.add_argument("--runs", type=int, default=3)
 parser.add_argument("--output", type=Path, default=Path("build-release/capture-performance.json"))

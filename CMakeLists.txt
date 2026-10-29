@@ -128,20 +128,32 @@ if(KWINCAPTURE_BUILD_TESTS)
   set_target_properties(capture-controller-tests PROPERTIES AUTOMOC ON)
   add_test(NAME capture-controller COMMAND $<TARGET_FILE:capture-controller-tests>)
 
-  add_executable(kwincapture-tests
-    tests/capture-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp tests/dmabuf-fixture.cpp
+  add_library(obs-test-support STATIC
+    tests/obs-test-fixture.cpp tests/obs-test-fixture.hpp tests/dmabuf-fixture.cpp
     ${OBS_SOURCES}
-    ${TEST_PROTOCOL_HEADERS}
   )
-  target_include_directories(kwincapture-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
-  target_compile_features(kwincapture-tests PRIVATE cxx_std_17)
-  target_link_libraries(kwincapture-tests PRIVATE
-    capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::WAYLAND_SERVER PkgConfig::DRM OpenGL::GL OpenGL::EGL
+  target_include_directories(obs-test-support PUBLIC src tests)
+  target_compile_features(obs-test-support PUBLIC cxx_std_17)
+  target_link_libraries(obs-test-support PUBLIC
+    capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::DRM OpenGL::GL OpenGL::EGL
   )
-  target_link_options(kwincapture-tests PRIVATE
+  target_link_options(obs-test-support INTERFACE
     "LINKER:--wrap=gs_texture_create_from_dmabuf" "LINKER:--wrap=gs_texture_destroy"
   )
+  set_target_properties(obs-test-support PROPERTIES AUTOMOC ON)
+
+  add_executable(kwincapture-tests
+    tests/capture-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
+    ${TEST_PROTOCOL_HEADERS}
+  )
+  target_include_directories(kwincapture-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(kwincapture-tests PRIVATE obs-test-support PkgConfig::WAYLAND_SERVER)
   set_target_properties(kwincapture-tests PROPERTIES AUTOMOC ON)
   add_test(NAME obs-integration COMMAND $<TARGET_FILE:kwincapture-tests>)
   set_tests_properties(obs-integration PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  # Live compositor tests and profiling remain explicit opt-in commands, outside CTest.
+  add_executable(kwincapture-live-tests tests/live-capture-test.cpp)
+  target_link_libraries(kwincapture-live-tests PRIVATE obs-test-support)
+  set_target_properties(kwincapture-live-tests PROPERTIES AUTOMOC ON)
 endif()
