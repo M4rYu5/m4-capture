@@ -6,6 +6,42 @@ class WindowRuleTest : public QObject
 {
 	Q_OBJECT
       private slots:
+	void updatedRulesUseCurrentSettings()
+	{
+		WindowRule rule{"old.app", "^editor$"};
+		rule.mode = TitleMatch::Regex;
+		QVERIFY(rule.matches({"old", "old.app", "Editor", false}));
+
+		WindowRule settings{"new.app", "^editor$"};
+		settings.mode = TitleMatch::Regex;
+		settings.disconnectOnTitleMismatch = false;
+		rule = rule.updated(settings);
+		QVERIFY(rule.matches({"new", "new.app", "Editor", false}));
+		QVERIFY(!rule.matches({"old", "old.app", "Editor", false}));
+		QVERIFY(!rule.disconnectOnTitleMismatch);
+
+		settings.caseSensitive = true;
+		rule = rule.updated(settings);
+		QVERIFY(!rule.matches({"new", "new.app", "Editor", false}));
+		QVERIFY(rule.matches({"new", "new.app", "editor", false}));
+
+		settings.title = "[";
+		rule = rule.updated(settings);
+		QVERIFY(!rule.error().isEmpty());
+		QVERIFY(!rule.matches({"new", "new.app", "editor", false}));
+
+		settings.title = "Editor*";
+		settings.mode = TitleMatch::Wildcard;
+		rule = rule.updated(settings);
+		QVERIFY(rule.error().isEmpty());
+		QVERIFY(rule.matches({"new", "new.app", "Editor - document", false}));
+		QVERIFY(!rule.matches({"new", "new.app", "Edito", false}));
+
+		settings.mode = TitleMatch::Regex;
+		rule = rule.updated(settings);
+		QVERIFY(rule.matches({"new", "new.app", "Edito", false}));
+	}
+
 	void titleFiltersAndStableSelection()
 	{
 		WindowRule rule{"test.app", "Editor"};

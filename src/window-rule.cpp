@@ -4,6 +4,17 @@
 
 WindowRule::WindowRule(QString appId, QString title) : appId(std::move(appId)), title(std::move(title)) {}
 
+WindowRule WindowRule::updated(const WindowRule &settings) const
+{
+	auto rule = *this;
+	rule.appId = settings.appId;
+	rule.title = settings.title;
+	rule.mode = settings.mode;
+	rule.caseSensitive = settings.caseSensitive;
+	rule.disconnectOnTitleMismatch = settings.disconnectOnTitleMismatch;
+	return rule;
+}
+
 const QRegularExpression &WindowRule::expression() const
 {
 	if (compiledTitle == title && compiledMode == mode && compiledCaseSensitive == caseSensitive)

@@ -110,14 +110,7 @@ void KWinCapture::applyConfiguration()
 {
 	auto next = state->configuration();
 	bool selectTarget = requiresTargetSelection(next, config);
-	// Retain the compiled filter even when unrelated settings change.
-	if (next.rule.title == config.rule.title && next.rule.mode == config.rule.mode &&
-	    next.rule.caseSensitive == config.rule.caseSensitive) {
-		auto rule = config.rule;
-		rule.appId = next.rule.appId;
-		rule.disconnectOnTitleMismatch = next.rule.disconnectOnTitleMismatch;
-		next.rule = std::move(rule);
-	}
+	next.rule = config.rule.updated(next.rule);
 	bool restart = next.cursor != config.cursor;
 	if (selectTarget) {
 		bool ambiguous;

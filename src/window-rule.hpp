@@ -20,6 +20,8 @@ struct WindowRule {
 	TitleMatch mode = TitleMatch::Contains;
 	bool caseSensitive = false;
 	bool disconnectOnTitleMismatch = true;
+	// Apply new settings to a copy, retaining the lazily validated expression cache.
+	WindowRule updated(const WindowRule &settings) const;
 	bool matches(const WindowInfo &window) const;
 	QString error() const;
 
