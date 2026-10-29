@@ -36,6 +36,24 @@ CaptureDiagnostics CaptureState::diagnostics() const
 	return diagnostic;
 }
 
+void CaptureState::setShowing(bool next)
+{
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		showing = next;
+	}
+	// Disable publication immediately, including any copy already in flight.
+	// Only the controller re-enables frames, after joining the old stream.
+	if (!next)
+		frames->setEnabled(false);
+}
+
+bool CaptureState::isShowing() const
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	return showing;
+}
+
 void CaptureState::setStatus(CaptureStatus next, const QString &detail)
 {
 	std::lock_guard<std::mutex> lock(mutex);
@@ -71,8 +89,11 @@ KWinCapture::KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *ba
 	deadline.setSingleShot(true);
 	deadline.setInterval(15000);
 	connect(&retry, &QTimer::timeout, this, [this] { reconcile(); });
-	connect(&deadline, &QTimer::timeout, this,
-		[this] { failed(QStringLiteral("No video frames were received.")); });
+	connect(&deadline, &QTimer::timeout, this, [this] {
+		if (pipewire)
+			pipewire->disableGpu();
+		failed(QStringLiteral("No video frames were received."));
+	});
 	connect(backend, &KWinConnection::changed, this, [this] { reconcile(); });
 }
 
@@ -89,10 +110,11 @@ void KWinCapture::applyConfiguration()
 {
 	auto next = state->configuration();
 	bool selectTarget = requiresTargetSelection(next, config);
+	next.rule = config.rule.updated(next.rule);
 	bool restart = next.cursor != config.cursor;
 	if (selectTarget) {
 		bool ambiguous;
-		auto windows = backend ? backend->windows() : QList<WindowInfo>{};
+		const auto windows = backend ? backend->windows() : QList<WindowInfo>{};
 		auto match = select_window(windows, next.rule, {}, next.preferredWindow, &ambiguous);
 		restart |= match != currentWindowUuid || !next.rule.error().isEmpty();
 	}
@@ -120,7 +142,12 @@ void KWinCapture::stopStream()
 	state->frames->clear();
 }
 
-void KWinCapture::status(CaptureStatus next, const QString &detail) { state->setStatus(next, detail); }
+void KWinCapture::status(CaptureStatus next, const QString &detail)
+{
+	state->setStatus(next, detail);
+	if (state->callbacks.changed)
+		state->callbacks.changed(*state);
+}
 
 void KWinCapture::focused(const WindowInfo &window)
 {
@@ -135,6 +162,20 @@ void KWinCapture::reconcile()
 		// Source deletion is queued; stop producing frames while awaiting controller deletion.
 		stopStream();
 		return;
+	}
+	const bool showing = state->isShowing();
+	if (!showing) {
+		retry.stop();
+		if (stream)
+			stopStream();
+	} else if (!state->frames->isEnabled()) {
+		// A hide/show pair can arrive before this queued update. Always retire
+		// the old producer before allowing publication or rendering again.
+		stopStream();
+		retry.stop();
+		std::lock_guard<std::mutex> lock(state->mutex);
+		if (state->showing)
+			state->frames->setEnabled(true);
 	}
 	if (config.rule.appId.isEmpty()) {
 		status(CaptureStatus::Idle, QStringLiteral("Choose a window or enter its application ID."));
@@ -152,7 +193,7 @@ void KWinCapture::reconcile()
 		status(CaptureStatus::Failed, config.rule.error());
 		return;
 	}
-	auto windows = backend->windows();
+	const auto windows = backend->windows();
 	bool ambiguous;
 	auto match = select_window(windows, config.rule, currentWindowUuid, config.preferredWindow, &ambiguous);
 	if (stream && match != currentWindowUuid)
@@ -172,6 +213,10 @@ void KWinCapture::reconcile()
 	for (const auto &window : windows)
 		if (window.uuid == currentWindowUuid)
 			focused(window);
+	if (!showing) {
+		status(CaptureStatus::Paused);
+		return;
+	}
 	if (!stream && !retry.isActive())
 		startStream();
 }
@@ -199,7 +244,7 @@ void KWinCapture::startStream()
 
 void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &serial)
 {
-	if (generation != attempt || !state->isAlive())
+	if (generation != attempt || !state->isAlive() || !state->isShowing())
 		return;
 	pipewire = std::make_unique<PipeWireCapture>(
 	    state->frames,
@@ -210,7 +255,8 @@ void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &se
 	    [this, attempt](PipeWireStatus next) {
 		    QMetaObject::invokeMethod(
 			this, [this, attempt, next] { streamStatusChanged(attempt, next); }, Qt::QueuedConnection);
-	    });
+	    },
+	    state->callbacks.gpu);
 	if (!pipewire->start(-1, node, serial)) {
 		failed(QStringLiteral("Could not connect to the KWin PipeWire stream."));
 		return;
@@ -226,7 +272,7 @@ void KWinCapture::streamFailed(uint64_t attempt, const QString &error)
 
 void KWinCapture::streamStatusChanged(uint64_t attempt, PipeWireStatus next)
 {
-	if (generation != attempt || !state->isAlive())
+	if (generation != attempt || !state->isAlive() || !state->isShowing())
 		return;
 	switch (next) {
 	case PipeWireStatus::Connecting:
@@ -250,7 +296,8 @@ void KWinCapture::failed(const QString &error)
 	if (state->callbacks.error)
 		state->callbacks.error(error);
 	persist();
-	retry.start();
+	if (state->isShowing())
+		retry.start();
 }
 
 void KWinCapture::persist()

@@ -24,21 +24,8 @@ static bool validLayout(const spa_data &plane, const spa_video_info_raw &format,
 	       end - std::min(first, last) <= plane.chunk->size;
 }
 
-FrameResult convert_video_frame(const spa_buffer &buffer, const spa_video_info_raw &format, VideoFrame &output)
+VideoLayout video_layout(const spa_buffer &buffer, const spa_video_info_raw &format)
 {
-	if (!supported_video_format(format))
-		return FrameResult::UnsupportedFormat;
-	if (!buffer.n_datas)
-		return FrameResult::Empty;
-	const auto &plane = buffer.datas[0];
-	if (!plane.data || !plane.chunk || plane.type == SPA_DATA_DmaBuf)
-		return FrameResult::UnmappedBuffer;
-	if (!plane.chunk->size || (plane.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED))
-		return FrameResult::Empty;
-	int64_t stride = plane.chunk->stride ? plane.chunk->stride : int64_t(format.size.width) * 4;
-	if (!validLayout(plane, format, stride))
-		return FrameResult::InvalidLayout;
-
 	uint32_t x = 0, y = 0, width = format.size.width, height = format.size.height;
 	auto crop = static_cast<const spa_meta_region *>(
 	    spa_buffer_find_meta_data(&buffer, SPA_META_VideoCrop, sizeof(spa_meta_region)));
@@ -54,42 +41,41 @@ FrameResult convert_video_frame(const spa_buffer &buffer, const spa_video_info_r
 	    spa_buffer_find_meta_data(&buffer, SPA_META_VideoTransform, sizeof(spa_meta_videotransform)));
 	uint32_t rotation = transform ? (transform->transform & 3) : 0;
 	bool flip = transform && (transform->transform & 4);
-	output.width = (rotation & 1) ? height : width;
-	output.height = (rotation & 1) ? width : height;
-	output.pixels.resize(size_t(output.width) * output.height * 4);
-	bool rgb = format.format == SPA_VIDEO_FORMAT_RGBA || format.format == SPA_VIDEO_FORMAT_RGBx;
-	bool opaque = format.format == SPA_VIDEO_FORMAT_BGRx || format.format == SPA_VIDEO_FORMAT_RGBx;
+	return {x, y, width, height, rotation, flip};
+}
+
+FrameResult copy_video_frame(const spa_buffer &buffer, const spa_video_info_raw &format, VideoFrame &output)
+{
+	if (!supported_video_format(format))
+		return FrameResult::UnsupportedFormat;
+	if (!buffer.n_datas)
+		return FrameResult::Empty;
+	const auto &plane = buffer.datas[0];
+	if (!plane.data || !plane.chunk || plane.type == SPA_DATA_DmaBuf)
+		return FrameResult::UnmappedBuffer;
+	if (!plane.chunk->size || (plane.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED))
+		return FrameResult::Empty;
+	int64_t stride = plane.chunk->stride ? plane.chunk->stride : int64_t(format.size.width) * 4;
+	if (!validLayout(plane, format, stride))
+		return FrameResult::InvalidLayout;
+	auto layout = video_layout(buffer, format);
+	output.width = layout.outputWidth();
+	output.height = layout.outputHeight();
+	output.gpu.reset();
+	output.layout = {0, 0, layout.width, layout.height, layout.rotation, layout.flip};
+	output.format = format.format;
+	size_t rowBytes = size_t(layout.width) * 4;
+	output.pixels.resize(rowBytes * layout.height);
 	auto bytes = static_cast<const uint8_t *>(plane.data);
-	for (uint32_t row = 0; row < height; ++row) {
-		auto input = bytes + plane.chunk->offset + int64_t(y + row) * stride + x * 4;
-		if (!rotation && !flip && !rgb) {
-			auto destination = output.pixels.data() + size_t(row) * width * 4;
-			std::memcpy(destination, input, size_t(width) * 4);
-			if (opaque)
-				for (size_t alpha = 3; alpha < size_t(width) * 4; alpha += 4)
-					destination[alpha] = 255;
-			continue;
-		}
-		for (uint32_t column = 0; column < width; ++column) {
-			uint32_t cx = flip ? width - 1 - column : column;
-			uint32_t dx = cx, dy = row;
-			if (rotation == 1) {
-				dx = row;
-				dy = width - 1 - cx;
-			} else if (rotation == 2) {
-				dx = width - 1 - cx;
-				dy = height - 1 - row;
-			} else if (rotation == 3) {
-				dx = height - 1 - row;
-				dy = cx;
-			}
-			auto pixel = input + column * 4;
-			auto destination = output.pixels.data() + (size_t(dy) * output.width + dx) * 4;
-			destination[0] = pixel[rgb ? 2 : 0];
-			destination[1] = pixel[1];
-			destination[2] = pixel[rgb ? 0 : 2];
-			destination[3] = opaque ? 255 : pixel[3];
-		}
+	if (stride == int64_t(rowBytes)) {
+		auto input = bytes + plane.chunk->offset + int64_t(layout.y) * stride + layout.x * 4;
+		std::memcpy(output.pixels.data(), input, output.pixels.size());
+		return FrameResult::Ready;
+	}
+	for (uint32_t row = 0; row < layout.height; ++row) {
+		auto input = bytes + plane.chunk->offset + int64_t(layout.y + row) * stride + layout.x * 4;
+		auto destination = output.pixels.data() + row * rowBytes;
+		std::memcpy(destination, input, rowBytes);
 	}
 	return FrameResult::Ready;
 }

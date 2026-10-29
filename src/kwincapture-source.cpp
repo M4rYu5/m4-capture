@@ -1,12 +1,12 @@
 #include "obs-capture.hpp"
+#include "obs-video.hpp"
 #include <obs-module.h>
 
 struct WaylandSource {
 	std::shared_ptr<CaptureState> state;
 	OBSWeakSource source;
 	VideoFrame uploadFrame;
-	gs_texture_t *texture = nullptr;
-	uint32_t textureWidth = 0, textureHeight = 0;
+	ObsVideoRenderer renderer;
 };
 
 static const char *sourceName(void *) { return obs_module_text("Source.Name"); }
@@ -16,6 +16,8 @@ static void getStatus(void *data, calldata_t *result)
 	auto diagnostic = state->diagnostics();
 	calldata_set_string(result, "status", capture_status_name(diagnostic.status));
 	calldata_set_bool(result, "busy", diagnostic.status == CaptureStatus::Connecting);
+	calldata_set_int(result, "frames", state->frames->sequence());
+	calldata_set_bool(result, "gpu", state->frames->mode() == FrameBuffer::Mode::DmaBuf);
 }
 
 static void sourceUpdate(void *opaque, obs_data_t *settings)
@@ -30,9 +32,11 @@ static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
 	auto data = new WaylandSource;
 	data->source = OBSGetWeakRef(source);
 	data->state = create_obs_capture_state(source, settings);
+	data->state->setShowing(false);
 	sourceUpdate(data, settings);
 	auto handler = obs_source_get_proc_handler(source);
-	proc_handler_add(handler, "void get_status(out string status, out bool busy)", getStatus, data);
+	proc_handler_add(handler, "void get_status(out string status, out bool busy, out int frames, out bool gpu)",
+			 getStatus, data);
 	return data;
 }
 
@@ -40,15 +44,24 @@ static void sourceDestroy(void *opaque)
 {
 	auto data = static_cast<WaylandSource *>(opaque);
 	release_capture(data->state);
-	if (data->texture) {
-		obs_enter_graphics();
-		gs_texture_destroy(data->texture);
-		obs_leave_graphics();
-	}
 	delete data;
 }
 
 static void sourceDefaults(obs_data_t *settings) { set_capture_defaults(settings); }
+
+static void sourceShow(void *opaque)
+{
+	auto state = static_cast<WaylandSource *>(opaque)->state;
+	state->setShowing(true);
+	queue_capture_update(state);
+}
+
+static void sourceHide(void *opaque)
+{
+	auto state = static_cast<WaylandSource *>(opaque)->state;
+	state->setShowing(false);
+	queue_capture_update(state);
+}
 
 static void sourceSave(void *opaque, obs_data_t *settings)
 {
@@ -97,10 +110,17 @@ static obs_properties_t *sourceProperties(void *opaque)
 {
 	auto props = obs_properties_create();
 	CaptureConfig config;
+	bool cpuFallback = false;
 	if (opaque) {
 		auto state = static_cast<WaylandSource *>(opaque)->state;
 		config = state->configuration();
+		cpuFallback = state->frames->mode() == FrameBuffer::Mode::Cpu;
 	}
+	auto warning =
+	    obs_properties_add_text(props, "cpu_fallback", obs_module_text("Source.CpuFallback"), OBS_TEXT_INFO);
+	obs_property_text_set_info_type(warning, OBS_TEXT_INFO_WARNING);
+	obs_property_text_set_info_word_wrap(warning, true);
+	obs_property_set_visible(warning, cpuFallback);
 	auto picker = obs_properties_add_list(props, "selected_window", obs_module_text("Source.Window"),
 					      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	setHelpDescription(picker, "Source.Window.Help");
@@ -154,32 +174,7 @@ static void sourceRender(void *opaque, gs_effect_t *)
 	auto update = state->frames->take(data->uploadFrame);
 	if (update == FrameBuffer::Update::Empty)
 		return;
-	auto width = data->uploadFrame.width;
-	auto height = data->uploadFrame.height;
-	bool upload = update == FrameBuffer::Update::Updated;
-	if (!data->texture || data->textureWidth != width || data->textureHeight != height) {
-		gs_texture_destroy(data->texture);
-		data->texture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, GS_DYNAMIC);
-		data->textureWidth = width;
-		data->textureHeight = height;
-		upload = true;
-	}
-	if (!data->texture)
-		return;
-	if (upload)
-		gs_texture_set_image(data->texture, data->uploadFrame.pixels.data(), width * 4, false);
-
-	auto effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-	bool previous = gs_framebuffer_srgb_enabled();
-	// KWin pixels are premultiplied; do not apply alpha to their colors again.
-	gs_blend_state_push();
-	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
-	gs_enable_framebuffer_srgb(true);
-	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"), data->texture);
-	while (gs_effect_loop(effect, "Draw"))
-		gs_draw_sprite(data->texture, 0, width, height);
-	gs_enable_framebuffer_srgb(previous);
-	gs_blend_state_pop();
+	data->renderer.render(data->uploadFrame, update == FrameBuffer::Update::Updated);
 }
 
 void register_kwincapture_source()
@@ -199,6 +194,8 @@ void register_kwincapture_source()
 	info.get_width = sourceWidth;
 	info.get_height = sourceHeight;
 	info.video_render = sourceRender;
+	info.show = sourceShow;
+	info.hide = sourceHide;
 	info.icon_type = OBS_ICON_TYPE_WINDOW_CAPTURE;
 	obs_register_source(&info);
 }

@@ -1,15 +1,34 @@
 #include "window-rule.hpp"
 
-#include <QRegularExpression>
+#include <utility>
 
-static QRegularExpression expression(const WindowRule &rule)
+WindowRule::WindowRule(QString appId, QString title) : appId(std::move(appId)), title(std::move(title)) {}
+
+WindowRule WindowRule::updated(const WindowRule &settings) const
 {
-	auto pattern = rule.mode == TitleMatch::Wildcard
-			   ? QRegularExpression::wildcardToRegularExpression(
-				 rule.title, QRegularExpression::NonPathWildcardConversion)
-			   : rule.title;
-	return QRegularExpression(pattern, rule.caseSensitive ? QRegularExpression::NoPatternOption
-							      : QRegularExpression::CaseInsensitiveOption);
+	auto rule = *this;
+	rule.appId = settings.appId;
+	rule.title = settings.title;
+	rule.mode = settings.mode;
+	rule.caseSensitive = settings.caseSensitive;
+	rule.disconnectOnTitleMismatch = settings.disconnectOnTitleMismatch;
+	return rule;
+}
+
+const QRegularExpression &WindowRule::expression() const
+{
+	if (compiledTitle == title && compiledMode == mode && compiledCaseSensitive == caseSensitive)
+		return compiledExpression;
+	compiledTitle = title;
+	compiledMode = mode;
+	compiledCaseSensitive = caseSensitive;
+	auto pattern =
+	    mode == TitleMatch::Wildcard
+		? QRegularExpression::wildcardToRegularExpression(title, QRegularExpression::NonPathWildcardConversion)
+		: title;
+	compiledExpression = QRegularExpression(pattern, caseSensitive ? QRegularExpression::NoPatternOption
+								       : QRegularExpression::CaseInsensitiveOption);
+	return compiledExpression;
 }
 
 bool WindowRule::matches(const WindowInfo &window) const
@@ -23,14 +42,14 @@ bool WindowRule::matches(const WindowInfo &window) const
 		return window.title.compare(title, sensitivity) == 0;
 	if (mode == TitleMatch::Contains)
 		return window.title.contains(title, sensitivity);
-	auto regex = expression(*this);
+	const auto &regex = expression();
 	return regex.isValid() && regex.match(window.title).hasMatch();
 }
 
 QString WindowRule::error() const
 {
 	if (!title.isEmpty() && mode == TitleMatch::Regex) {
-		auto regex = expression(*this);
+		const auto &regex = expression();
 		if (!regex.isValid())
 			return regex.errorString();
 	}

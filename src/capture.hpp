@@ -16,6 +16,7 @@ class KWinCapture;
 class KWinConnection;
 class KWinStream;
 class PipeWireCapture;
+class DmaBufCapture;
 enum class PipeWireStatus;
 
 // Idle: unconfigured; Waiting: no unique target; Connecting:
@@ -41,6 +42,8 @@ struct CaptureCallbacks {
 	std::function<void(const CaptureState &)> save;
 	std::function<void()> focused;
 	std::function<void(const QString &)> error;
+	std::function<void(const CaptureState &)> changed;
+	std::shared_ptr<DmaBufCapture> gpu;
 };
 
 // Configuration and diagnostic accessors are safe to call from any thread.
@@ -51,6 +54,8 @@ class CaptureState
 	void configure(const CaptureConfig &config);
 	CaptureConfig configuration() const;
 	CaptureDiagnostics diagnostics() const;
+	void setShowing(bool showing);
+	bool isShowing() const;
 	bool isAlive() const { return alive.load(); }
 	const std::shared_ptr<FrameBuffer> frames;
 
@@ -61,6 +66,7 @@ class CaptureState
 	mutable std::mutex mutex;
 	CaptureConfig config;
 	CaptureDiagnostics diagnostic;
+	bool showing = true;
 	std::atomic<bool> alive{true};
 	const CaptureCallbacks callbacks;
 	// Only accessed by the controller and runtime on the Qt UI thread.

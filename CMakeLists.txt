@@ -7,10 +7,15 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 find_package(libobs REQUIRED CONFIG)
+if(libobs_VERSION VERSION_LESS 32)
+  message(FATAL_ERROR "OBS Studio 32 or newer is required.")
+endif()
 find_package(obs-frontend-api REQUIRED CONFIG)
 find_package(Qt6 REQUIRED COMPONENTS Core)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3>=0.3.40)
+pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.2)
+pkg_check_modules(DRM REQUIRED IMPORTED_TARGET libdrm)
+find_package(OpenGL REQUIRED)
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 set(PROTOCOL_SOURCES)
@@ -51,12 +56,15 @@ set_target_properties(capture-core PROPERTIES
 
 set(OBS_SOURCES
   src/obs-capture.cpp src/obs-capture.hpp
+  src/obs-graphics.hpp
   src/focus-order.cpp
   src/kwincapture-source.cpp
+  src/obs-dmabuf.cpp src/obs-dmabuf.hpp
+  src/obs-video.cpp src/obs-video.hpp
 )
 add_library(kwincapture MODULE src/plugin.cpp ${OBS_SOURCES})
 target_link_libraries(kwincapture PRIVATE
-  capture-core OBS::libobs OBS::obs-frontend-api
+  capture-core OBS::libobs OBS::obs-frontend-api PkgConfig::DRM OpenGL::GL
 )
 target_compile_features(kwincapture PRIVATE cxx_std_17)
 target_compile_options(kwincapture PRIVATE -Wall -Wextra -Wpedantic)
@@ -80,6 +88,7 @@ install(FILES LICENSE DESTINATION .)
 option(KWINCAPTURE_BUILD_TESTS "Build window matching and capture lifecycle tests" OFF)
 if(KWINCAPTURE_BUILD_TESTS)
   enable_testing()
+  find_package(OpenGL REQUIRED COMPONENTS EGL)
   find_package(Qt6 REQUIRED COMPONENTS Test Widgets)
   add_executable(window-rule-tests tests/window-rule-test.cpp src/window-rule.cpp)
   target_include_directories(window-rule-tests PRIVATE src)
@@ -119,17 +128,32 @@ if(KWINCAPTURE_BUILD_TESTS)
   set_target_properties(capture-controller-tests PROPERTIES AUTOMOC ON)
   add_test(NAME capture-controller COMMAND $<TARGET_FILE:capture-controller-tests>)
 
+  add_library(obs-test-support STATIC
+    tests/obs-test-fixture.cpp tests/obs-test-fixture.hpp tests/dmabuf-fixture.cpp
+    ${OBS_SOURCES}
+  )
+  target_include_directories(obs-test-support PUBLIC src tests)
+  target_compile_features(obs-test-support PUBLIC cxx_std_17)
+  target_link_libraries(obs-test-support PUBLIC
+    capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::DRM OpenGL::GL OpenGL::EGL
+  )
+  target_link_options(obs-test-support INTERFACE
+    "LINKER:--wrap=gs_texture_create_from_dmabuf" "LINKER:--wrap=gs_texture_destroy"
+  )
+  set_target_properties(obs-test-support PROPERTIES AUTOMOC ON)
+
   add_executable(kwincapture-tests
     tests/capture-test.cpp tests/video-fixture.cpp tests/kwin-fixture.cpp
-    ${OBS_SOURCES}
     ${TEST_PROTOCOL_HEADERS}
   )
-  target_include_directories(kwincapture-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
-  target_compile_features(kwincapture-tests PRIVATE cxx_std_17)
-  target_link_libraries(kwincapture-tests PRIVATE
-    capture-core OBS::libobs Qt6::Widgets Qt6::Test PkgConfig::WAYLAND_SERVER
-  )
+  target_include_directories(kwincapture-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(kwincapture-tests PRIVATE obs-test-support PkgConfig::WAYLAND_SERVER)
   set_target_properties(kwincapture-tests PROPERTIES AUTOMOC ON)
   add_test(NAME obs-integration COMMAND $<TARGET_FILE:kwincapture-tests>)
   set_tests_properties(obs-integration PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  # Live compositor tests and profiling remain explicit opt-in commands, outside CTest.
+  add_executable(kwincapture-live-tests tests/live-capture-test.cpp)
+  target_link_libraries(kwincapture-live-tests PRIVATE obs-test-support)
+  set_target_properties(kwincapture-live-tests PROPERTIES AUTOMOC ON)
 endif()
