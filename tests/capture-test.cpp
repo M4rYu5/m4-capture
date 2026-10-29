@@ -2,6 +2,7 @@
 #include "kwin-fixture.hpp"
 #include "obs-capture.hpp"
 #include "obs-dmabuf.hpp"
+#include "obs-graphics.hpp"
 #include "obs-video.hpp"
 #include "pixel-fixture.hpp"
 #include "video-fixture.hpp"
@@ -69,7 +70,7 @@ class CaptureTest : public QObject
 	}
 	QColor renderedPixel(obs_source_t *source)
 	{
-		obs_enter_graphics();
+		GraphicsLock lock;
 		auto target = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 		auto stage = gs_stagesurface_create(160, 90, GS_RGBA);
 		QColor result;
@@ -91,12 +92,11 @@ class CaptureTest : public QObject
 		}
 		gs_stagesurface_destroy(stage);
 		gs_texrender_destroy(target);
-		obs_leave_graphics();
 		return result;
 	}
 	QByteArray gpuPixels(const VideoFrame &frame)
 	{
-		obs_enter_graphics();
+		GraphicsLock lock;
 		auto stage = gs_stagesurface_create(frame.width, frame.height, GS_BGRA);
 		QByteArray pixels;
 		if (stage) {
@@ -110,12 +110,11 @@ class CaptureTest : public QObject
 			}
 			gs_stagesurface_destroy(stage);
 		}
-		obs_leave_graphics();
 		return pixels;
 	}
 	QByteArray rendererPixels(ObsVideoRenderer &renderer, const VideoFrame &frame, bool updated = true)
 	{
-		obs_enter_graphics();
+		GraphicsLock lock;
 		auto target = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
 		auto stage = gs_stagesurface_create(frame.width, frame.height, GS_BGRA);
 		QByteArray pixels;
@@ -141,7 +140,6 @@ class CaptureTest : public QObject
 		}
 		gs_stagesurface_destroy(stage);
 		gs_texrender_destroy(target);
-		obs_leave_graphics();
 		return pixels;
 	}
 
@@ -1235,13 +1233,14 @@ class CaptureTest : public QObject
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 15000);
 		QCOMPARE(obs_source_get_width(target), uint32_t(width));
 		QCOMPARE(obs_source_get_height(target), uint32_t(height));
-		obs_enter_graphics();
-		auto render = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-		obs_leave_graphics();
+		gs_texrender_t *render = nullptr;
+		{
+			GraphicsLock lock;
+			render = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+		}
 		auto destroyRender = qScopeGuard([&] {
-			obs_enter_graphics();
+			GraphicsLock lock;
 			gs_texrender_destroy(render);
-			obs_leave_graphics();
 		});
 		QVERIFY(render);
 		QTimer animate;
@@ -1262,7 +1261,7 @@ class CaptureTest : public QObject
 				++window.tick;
 				window.update();
 			}
-			obs_enter_graphics();
+			GraphicsLock lock;
 			gs_texrender_reset(render);
 			if (gs_texrender_begin(render, width, height)) {
 				gs_projection_push();
@@ -1273,7 +1272,6 @@ class CaptureTest : public QObject
 				gs_flush();
 				++draws;
 			}
-			obs_leave_graphics();
 		});
 		timer.start(16);
 		QTest::qWait(2000);

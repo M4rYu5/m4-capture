@@ -1,5 +1,6 @@
 #include "obs-video.hpp"
 #include "obs-dmabuf.hpp"
+#include "obs-graphics.hpp"
 
 #include <obs-module.h>
 #include <utility>
@@ -42,9 +43,8 @@ void draw_video_texture(gs_texture_t *texture, const VideoLayout &layout)
 
 ObsVideoRenderer::~ObsVideoRenderer()
 {
-	obs_enter_graphics();
+	GraphicsLock lock;
 	gs_texture_destroy(texture);
-	obs_leave_graphics();
 }
 
 void ObsVideoRenderer::render(const VideoFrame &frame, bool updated)

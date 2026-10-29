@@ -1,5 +1,6 @@
 #pragma once
 
+#include "obs-graphics.hpp"
 #include "video-frame.hpp"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -33,7 +34,7 @@ struct TestDmaBuf {
 
 	TestDmaBuf()
 	{
-		obs_enter_graphics();
+		GraphicsLock lock;
 		format.size = {16, 12};
 		for (unsigned y = 0; y < format.size.height; ++y)
 			for (unsigned x = 0; x < format.size.width; ++x) {
@@ -88,26 +89,23 @@ struct TestDmaBuf {
 				eglDestroyImage(display, image);
 		}
 		glFinish();
-		obs_leave_graphics();
 	}
 	void upload()
 	{
-		obs_enter_graphics();
+		GraphicsLock lock;
 		GLint previous = 0;
 		glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
 		glBindTexture(GL_TEXTURE_2D, *static_cast<GLuint *>(gs_texture_get_obj(texture)));
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 16, 12, GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
 		glBindTexture(GL_TEXTURE_2D, previous);
 		glFinish();
-		obs_leave_graphics();
 	}
 	~TestDmaBuf()
 	{
 		for (auto fd : fds)
 			if (fd >= 0)
 				close(fd);
-		obs_enter_graphics();
+		GraphicsLock lock;
 		gs_texture_destroy(texture);
-		obs_leave_graphics();
 	}
 };

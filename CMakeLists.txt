@@ -6,7 +6,10 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "KWinCapture currently targets Linux.")
 endif()
 
-find_package(libobs 32 REQUIRED CONFIG)
+find_package(libobs REQUIRED CONFIG)
+if(libobs_VERSION VERSION_LESS 32)
+  message(FATAL_ERROR "OBS Studio 32 or newer is required.")
+endif()
 find_package(obs-frontend-api REQUIRED CONFIG)
 find_package(Qt6 REQUIRED COMPONENTS Core)
 find_package(PkgConfig REQUIRED)
@@ -53,6 +56,7 @@ set_target_properties(capture-core PROPERTIES
 
 set(OBS_SOURCES
   src/obs-capture.cpp src/obs-capture.hpp
+  src/obs-graphics.hpp
   src/focus-order.cpp
   src/kwincapture-source.cpp
   src/obs-dmabuf.cpp src/obs-dmabuf.hpp

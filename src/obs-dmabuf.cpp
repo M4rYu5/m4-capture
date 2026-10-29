@@ -1,4 +1,5 @@
 #include "obs-dmabuf.hpp"
+#include "obs-graphics.hpp"
 #include "obs-video.hpp"
 
 #include <GL/gl.h>
@@ -13,11 +14,6 @@
 
 namespace
 {
-struct GraphicsLock {
-	GraphicsLock() { obs_enter_graphics(); }
-	~GraphicsLock() { obs_leave_graphics(); }
-};
-
 struct ObsGpuFrame : GpuFrame {
 	gs_texrender_t *target = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
 	~ObsGpuFrame() override
