@@ -90,6 +90,22 @@ class VideoFrameTest : public QObject
 		QCOMPARE(markers(output), QByteArray::fromHex("010203040506"));
 	}
 
+	void fullWidthCropWithOffset()
+	{
+		PixelFixture input(3, 4);
+		std::vector<uint8_t> offsetBytes(input.bytes.size() + 1, 255);
+		std::copy(input.bytes.begin(), input.bytes.end(), offsetBytes.begin() + 1);
+		input.plane.data = offsetBytes.data();
+		input.plane.maxsize = offsetBytes.size();
+		input.chunk.offset = 1;
+		input.crop.region = {{0, 1}, {3, 2}};
+		VideoFrame output;
+		QCOMPARE(copy_video_frame(input.buffer, input.format, output), FrameResult::Ready);
+		QCOMPARE(output.pixels, std::vector<uint8_t>(input.bytes.begin() + 12, input.bytes.begin() + 36));
+		QCOMPARE(output.width, 3u);
+		QCOMPARE(output.height, 2u);
+	}
+
 	void negativeStride()
 	{
 		PixelFixture input;

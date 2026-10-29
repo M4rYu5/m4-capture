@@ -67,6 +67,11 @@ FrameResult copy_video_frame(const spa_buffer &buffer, const spa_video_info_raw 
 	size_t rowBytes = size_t(layout.width) * 4;
 	output.pixels.resize(rowBytes * layout.height);
 	auto bytes = static_cast<const uint8_t *>(plane.data);
+	if (stride == int64_t(rowBytes)) {
+		auto input = bytes + plane.chunk->offset + int64_t(layout.y) * stride + layout.x * 4;
+		std::memcpy(output.pixels.data(), input, output.pixels.size());
+		return FrameResult::Ready;
+	}
 	for (uint32_t row = 0; row < layout.height; ++row) {
 		auto input = bytes + plane.chunk->offset + int64_t(layout.y + row) * stride + layout.x * 4;
 		auto destination = output.pixels.data() + row * rowBytes;
