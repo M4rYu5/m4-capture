@@ -284,7 +284,11 @@ void KWinConnection::addWindow(const QString &uuid)
 		l.parent_window = [](void *, auto *, org_kde_plasma_window *) {};
 		l.geometry = [](void *, auto *, int32_t, int32_t, uint32_t, uint32_t) {};
 		l.icon_changed = [](void *, auto *) {};
-		l.pid_changed = [](void *, auto *, uint32_t) {};
+		l.pid_changed = [](void *d, auto *, uint32_t pid) {
+			auto w = static_cast<Window *>(d);
+			w->info.pid = pid;
+			w->owner->notify();
+		};
 		l.virtual_desktop_entered = [](void *, auto *, const char *) {};
 		l.virtual_desktop_left = [](void *, auto *, const char *) {};
 		l.application_menu = [](void *, auto *, const char *, const char *) {};

@@ -21,6 +21,8 @@ CaptureState::CaptureState(uint32_t width, uint32_t height, CaptureCallbacks cal
 void CaptureState::configure(const CaptureConfig &next)
 {
 	std::lock_guard<std::mutex> lock(mutex);
+	if (!next.audio || requiresTargetSelection(next, config))
+		audioEnabled = false;
 	config = next;
 }
 
@@ -44,8 +46,10 @@ void CaptureState::setShowing(bool next)
 	}
 	// Disable publication immediately, including any copy already in flight.
 	// Only the controller re-enables frames, after joining the old stream.
-	if (!next)
+	if (!next) {
 		frames->setEnabled(false);
+		audioEnabled = false;
+	}
 }
 
 bool CaptureState::isShowing() const
@@ -88,6 +92,9 @@ KWinCapture::KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *ba
 	retry.setInterval(2000);
 	deadline.setSingleShot(true);
 	deadline.setInterval(15000);
+	audioRetry.setSingleShot(true);
+	audioRetry.setInterval(2000);
+	connect(&audioRetry, &QTimer::timeout, this, [this] { reconcile(); });
 	connect(&retry, &QTimer::timeout, this, [this] { reconcile(); });
 	connect(&deadline, &QTimer::timeout, this, [this] {
 		if (pipewire)
@@ -97,7 +104,11 @@ KWinCapture::KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *ba
 	connect(backend, &KWinConnection::changed, this, [this] { reconcile(); });
 }
 
-KWinCapture::~KWinCapture() { stopStream(); }
+KWinCapture::~KWinCapture()
+{
+	stopAudio();
+	stopStream();
+}
 
 void KWinCapture::update()
 {
@@ -160,17 +171,20 @@ void KWinCapture::reconcile()
 {
 	if (!state->isAlive()) {
 		// Source deletion is queued; stop producing frames while awaiting controller deletion.
+		stopAudio();
 		stopStream();
 		return;
 	}
 	const bool showing = state->isShowing();
 	if (!showing) {
 		retry.stop();
+		stopAudio();
 		if (stream)
 			stopStream();
 	} else if (!state->frames->isEnabled()) {
 		// A hide/show pair can arrive before this queued update. Always retire
 		// the old producer before allowing publication or rendering again.
+		stopAudio();
 		stopStream();
 		retry.stop();
 		std::lock_guard<std::mutex> lock(state->mutex);
@@ -178,10 +192,12 @@ void KWinCapture::reconcile()
 			state->frames->setEnabled(true);
 	}
 	if (config.rule.appId.isEmpty()) {
+		stopAudio();
 		status(CaptureStatus::Idle, QStringLiteral("Choose a window or enter its application ID."));
 		return;
 	}
 	if (!backend || !backend->available()) {
+		stopAudio();
 		auto error = backend ? backend->error() : QStringLiteral("The KWin connection was destroyed.");
 		if (stream)
 			failed(error);
@@ -190,6 +206,7 @@ void KWinCapture::reconcile()
 		return;
 	}
 	if (!config.rule.error().isEmpty()) {
+		stopAudio();
 		status(CaptureStatus::Failed, config.rule.error());
 		return;
 	}
@@ -199,6 +216,7 @@ void KWinCapture::reconcile()
 	if (stream && match != currentWindowUuid)
 		stopStream();
 	if (match.isEmpty()) {
+		stopAudio();
 		currentWindowUuid.clear();
 		wasFocused = false;
 		status(CaptureStatus::Waiting,
@@ -219,6 +237,62 @@ void KWinCapture::reconcile()
 	}
 	if (!stream && !retry.isActive())
 		startStream();
+	for (const auto &window : windows)
+		if (window.uuid == currentWindowUuid)
+			updateAudio(window);
+}
+
+void KWinCapture::stopAudio()
+{
+	state->audioEnabled = false;
+	++audioGeneration;
+	audioRetry.stop();
+	audio.reset();
+	audioAppId.clear();
+	audioPid = 0;
+}
+
+void KWinCapture::updateAudio(const WindowInfo &window)
+{
+	if (!config.audio || !state->callbacks.audio) {
+		stopAudio();
+		return;
+	}
+	if (audio && (audioAppId != window.appId || audioPid != window.pid))
+		stopAudio();
+	if (audio) {
+		state->audioEnabled = true;
+		return;
+	}
+	if (audioRetry.isActive())
+		return;
+	audioAppId = window.appId;
+	audioPid = window.pid;
+	const auto attempt = audioGeneration;
+	audio = std::make_unique<PipeWireAudioCapture>(
+	    window.appId, window.pid,
+	    [state = state](const AudioFrame &frame) {
+		    if (state->isAlive() && state->audioEnabled)
+			    state->callbacks.audio(frame);
+	    },
+	    [this, attempt](QString error) {
+		    QMetaObject::invokeMethod(
+			this, [this, attempt, error] { audioFailed(attempt, error); }, Qt::QueuedConnection);
+	    });
+	state->audioEnabled = true;
+	if (!audio->start())
+		audioFailed(attempt, QStringLiteral("Could not connect to PipeWire for application audio."));
+}
+
+void KWinCapture::audioFailed(uint64_t attempt, const QString &error)
+{
+	if (attempt != audioGeneration || !state->isAlive())
+		return;
+	stopAudio();
+	if (state->callbacks.error)
+		state->callbacks.error(error);
+	if (config.audio && state->isShowing())
+		audioRetry.start();
 }
 
 void KWinCapture::startStream()

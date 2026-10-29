@@ -60,6 +60,7 @@ void KWinFixture::bindManagement(wl_client *client, void *data, uint32_t version
 			w.resources.append(window);
 			org_kde_plasma_window_send_app_id_changed(window, w.info.appId.toUtf8().constData());
 			org_kde_plasma_window_send_title_changed(window, w.info.title.toUtf8().constData());
+			org_kde_plasma_window_send_pid_changed(window, w.info.pid);
 			org_kde_plasma_window_send_state_changed(
 			    window, w.info.active ? ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_ACTIVE : 0);
 			org_kde_plasma_window_send_initial_state(window);

@@ -22,9 +22,12 @@ static void getStatus(void *data, calldata_t *result)
 
 static void sourceUpdate(void *opaque, obs_data_t *settings)
 {
-	auto state = static_cast<WaylandSource *>(opaque)->state;
-	state->configure(read_capture_config(settings));
-	queue_capture_update(state);
+	auto data = static_cast<WaylandSource *>(opaque);
+	auto config = read_capture_config(settings);
+	data->state->configure(config);
+	if (auto source = OBSGetStrongRef(data->source))
+		obs_source_set_audio_active(source, config.audio);
+	queue_capture_update(data->state);
 }
 
 static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
@@ -151,6 +154,8 @@ static obs_properties_t *sourceProperties(void *opaque)
 						  obs_module_text("Source.DisconnectOnTitleMismatch"));
 	setHelpDescription(disconnect, "Source.DisconnectOnTitleMismatch.Help");
 	obs_properties_add_bool(props, "capture_cursor", obs_module_text("Source.Cursor"));
+	auto audio = obs_properties_add_bool(props, "capture_audio", obs_module_text("Source.Audio"));
+	setHelpDescription(audio, "Source.Audio.Help");
 	auto focus = obs_properties_add_bool(props, "raise_on_focus", obs_module_text("Source.RaiseOnFocus"));
 	setHelpDescription(focus, "Source.RaiseOnFocus.Help");
 	return props;
@@ -183,7 +188,7 @@ void register_kwincapture_source()
 	// Keep saved OBS scenes compatible across plugin renames.
 	info.id = "waylandconnect_source";
 	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB;
+	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB;
 	info.get_name = sourceName;
 	info.create = sourceCreate;
 	info.destroy = sourceDestroy;

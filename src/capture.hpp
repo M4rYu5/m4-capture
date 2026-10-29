@@ -1,6 +1,7 @@
 #pragma once
 
 #include "frame-buffer.hpp"
+#include "pipewire-audio.hpp"
 #include "window-rule.hpp"
 
 #include <QObject>
@@ -29,6 +30,7 @@ struct CaptureConfig {
 	QString preferredWindow;
 	bool cursor = true;
 	bool raiseOnFocus = false;
+	bool audio = false;
 };
 
 struct CaptureDiagnostics {
@@ -38,11 +40,13 @@ struct CaptureDiagnostics {
 
 class CaptureState;
 struct CaptureCallbacks {
-	// Invoked on the controller's Qt thread. Empty callbacks are supported.
+	// Invoked on the controller's Qt thread except audio. Empty callbacks are supported.
 	std::function<void(const CaptureState &)> save;
 	std::function<void()> focused;
 	std::function<void(const QString &)> error;
 	std::function<void(const CaptureState &)> changed;
+	// Audio is delivered on a dedicated worker thread, outside PipeWire processing.
+	std::function<void(const AudioFrame &)> audio;
 	std::shared_ptr<DmaBufCapture> gpu;
 };
 
@@ -68,6 +72,7 @@ class CaptureState
 	CaptureDiagnostics diagnostic;
 	bool showing = true;
 	std::atomic<bool> alive{true};
+	std::atomic<bool> audioEnabled{false};
 	const CaptureCallbacks callbacks;
 	// Only accessed by the controller and runtime on the Qt UI thread.
 	QPointer<KWinCapture> controller;
@@ -97,6 +102,11 @@ class KWinCapture : public QObject
 	CaptureConfig config;
 	std::unique_ptr<KWinStream> stream;
 	std::unique_ptr<PipeWireCapture> pipewire;
+	std::unique_ptr<PipeWireAudioCapture> audio;
+	QTimer audioRetry;
+	QString audioAppId;
+	uint32_t audioPid = 0;
+	uint64_t audioGeneration = 0;
 	QTimer retry;
 	QTimer deadline;
 	// The selected window survives stream restarts (for example, cursor changes).
@@ -111,6 +121,9 @@ class KWinCapture : public QObject
 	void streamFailed(uint64_t attempt, const QString &error);
 	void streamStatusChanged(uint64_t attempt, PipeWireStatus next);
 	void stopStream();
+	void updateAudio(const WindowInfo &window);
+	void stopAudio();
+	void audioFailed(uint64_t attempt, const QString &error);
 	void failed(const QString &error);
 	void status(CaptureStatus next, const QString &detail = {});
 	void persist();

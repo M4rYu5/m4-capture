@@ -16,6 +16,7 @@ CaptureConfig read_capture_config(obs_data_t *settings)
 	config.rule.disconnectOnTitleMismatch = obs_data_get_bool(settings, "disconnect_on_title_mismatch");
 	config.preferredWindow = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
 	config.cursor = obs_data_get_bool(settings, "capture_cursor");
+	config.audio = obs_data_get_bool(settings, "capture_audio");
 	config.raiseOnFocus = obs_data_get_bool(settings, "raise_on_focus");
 	return config;
 }
@@ -29,6 +30,7 @@ void write_capture_config(obs_data_t *settings, const CaptureConfig &config)
 	obs_data_set_bool(settings, "disconnect_on_title_mismatch", config.rule.disconnectOnTitleMismatch);
 	obs_data_set_string(settings, "selected_window", config.preferredWindow.toUtf8().constData());
 	obs_data_set_bool(settings, "capture_cursor", config.cursor);
+	obs_data_set_bool(settings, "capture_audio", config.audio);
 	// Older scenes may have disabled these options; capture is now always automatic.
 	obs_data_erase(settings, "auto_start");
 	obs_data_erase(settings, "auto_reconnect");
@@ -37,7 +39,9 @@ void write_capture_config(obs_data_t *settings, const CaptureConfig &config)
 
 void write_capture_state(obs_data_t *settings, const CaptureState &state)
 {
-	write_capture_config(settings, state.configuration());
+	// OBS defers video-source updates. A stream callback may save while a new
+	// audio choice or target is still pending; keep those newer settings.
+	write_capture_config(settings, read_capture_config(settings));
 	auto size = state.frames->size();
 	obs_data_set_int(settings, "width", size.width);
 	obs_data_set_int(settings, "height", size.height);
@@ -49,6 +53,7 @@ void set_capture_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "width", 1280);
 	obs_data_set_default_int(settings, "height", 720);
 	obs_data_set_default_bool(settings, "capture_cursor", defaults.cursor);
+	obs_data_set_default_bool(settings, "capture_audio", defaults.audio);
 	obs_data_set_default_bool(settings, "raise_on_focus", defaults.raiseOnFocus);
 	obs_data_set_default_bool(settings, "disconnect_on_title_mismatch", defaults.rule.disconnectOnTitleMismatch);
 }
@@ -57,6 +62,20 @@ std::shared_ptr<CaptureState> create_obs_capture_state(obs_source_t *source, obs
 {
 	OBSWeakSource weak = OBSGetWeakRef(source);
 	CaptureCallbacks callbacks;
+	callbacks.audio = [weak](const AudioFrame &frame) {
+		auto source = OBSGetStrongRef(weak);
+		if (!source || obs_source_removed(source))
+			return;
+		obs_source_audio audio{};
+		audio.data[0] = reinterpret_cast<const uint8_t *>(frame.data[0]);
+		audio.data[1] = reinterpret_cast<const uint8_t *>(frame.data[1]);
+		audio.frames = frame.frames;
+		audio.speakers = SPEAKERS_STEREO;
+		audio.format = AUDIO_FORMAT_FLOAT_PLANAR;
+		audio.samples_per_sec = frame.sampleRate;
+		audio.timestamp = frame.timestamp;
+		obs_source_output_audio(source, &audio);
+	};
 	callbacks.save = [weak](const CaptureState &state) {
 		auto source = OBSGetStrongRef(weak);
 		if (!source || obs_source_removed(source))

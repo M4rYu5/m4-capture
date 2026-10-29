@@ -61,6 +61,11 @@ template <typename Test> int run_obs_tests(int argc, char **argv)
 	video.range = VIDEO_RANGE_FULL;
 	if (obs_reset_video(&video) != OBS_VIDEO_SUCCESS)
 		return 1;
+	obs_audio_info audio{};
+	audio.samples_per_sec = 48000;
+	audio.speakers = SPEAKERS_STEREO;
+	if (!obs_reset_audio(&audio))
+		return 1;
 	register_kwincapture_source();
 	Test test;
 	int result = QTest::qExec(&test, argc, argv);
