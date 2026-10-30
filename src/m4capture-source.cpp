@@ -118,6 +118,11 @@ static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, o
 	auto uuid = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
 	if (state->configuration().preferredWindow == uuid)
 		return false;
+	if (uuid.isEmpty()) {
+		obs_data_set_string(settings, "app_id", "");
+		obs_data_set_string(settings, "title_filter", "");
+		return true;
+	}
 	for (const auto &window : capture_windows())
 		if (window.uuid == uuid) {
 			auto rule = read_capture_config(settings).rule;
