@@ -14,9 +14,9 @@ extern "C" obs_source_t *obs_frontend_get_current_scene() { return obs_source_ge
 extern "C" void obs_frontend_save() { ++saves; }
 extern "C" const char *obs_module_text(const char *text) { return text; }
 
-obs_source_t *ObsTestFixture::createSource(const char *name, obs_data_t *settings, bool showing)
+obs_source_t *ObsTestFixture::createSource(const char *name, obs_data_t *settings, bool showing, const char *id)
 {
-	auto source = obs_source_create("m4capture_source", name, settings, nullptr);
+	auto source = obs_source_create(id, name, settings, nullptr);
 	if (source && showing) {
 		// Model a properties preview for tests that render a standalone source.
 		obs_source_inc_showing(source);

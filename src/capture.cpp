@@ -3,12 +3,14 @@
 #include "pipewire-capture.hpp"
 
 #include <QThread>
+#include <algorithm>
 
 namespace
 {
 bool requiresTargetSelection(const CaptureConfig &a, const CaptureConfig &b)
 {
-	return a.rule.appId != b.rule.appId || a.rule.title != b.rule.title || a.rule.mode != b.rule.mode ||
+	return a.target != b.target || a.display != b.display || a.rule.appId != b.rule.appId ||
+	       a.rule.title != b.rule.title || a.rule.mode != b.rule.mode ||
 	       a.rule.caseSensitive != b.rule.caseSensitive || a.preferredWindow != b.preferredWindow;
 }
 } // namespace
@@ -21,7 +23,7 @@ CaptureState::CaptureState(uint32_t width, uint32_t height, CaptureCallbacks cal
 void CaptureState::configure(const CaptureConfig &next)
 {
 	std::lock_guard<std::mutex> lock(mutex);
-	if (!next.audio || requiresTargetSelection(next, config))
+	if (next.target == CaptureConfig::Target::Desktop || !next.audio || requiresTargetSelection(next, config))
 		audioEnabled = false;
 	config = next;
 }
@@ -58,10 +60,10 @@ bool CaptureState::isShowing() const
 	return showing;
 }
 
-void CaptureState::setStatus(CaptureStatus next, const QString &detail)
+void CaptureState::setStatus(CaptureStatus next, const QString &detail, uint64_t generation, const QString &target)
 {
 	std::lock_guard<std::mutex> lock(mutex);
-	diagnostic = {next, detail};
+	diagnostic = {next, detail, generation, target};
 }
 
 const char *capture_status_name(CaptureStatus status)
@@ -101,7 +103,14 @@ M4Capture::M4Capture(std::shared_ptr<CaptureState> state, KWinConnection *backen
 			pipewire->disableGpu();
 		failed(QStringLiteral("No video frames were received."));
 	});
-	connect(backend, &KWinConnection::changed, this, [this] { reconcile(); });
+	connect(backend, &KWinConnection::windowsChanged, this, [this] {
+		if (config.target == CaptureConfig::Target::Window)
+			reconcile();
+	});
+	connect(backend, &KWinConnection::displaysChanged, this, [this] {
+		if (config.target == CaptureConfig::Target::Desktop)
+			reconcile();
+	});
 }
 
 M4Capture::~M4Capture()
@@ -122,8 +131,13 @@ void M4Capture::applyConfiguration()
 	auto next = state->configuration();
 	bool selectTarget = requiresTargetSelection(next, config);
 	next.rule = config.rule.updated(next.rule);
-	bool restart = next.cursor != config.cursor;
-	if (selectTarget) {
+	bool restart = next.cursor != config.cursor || next.target != config.target;
+	if (next.target == CaptureConfig::Target::Desktop) {
+		stopAudio();
+		next.audio = false;
+		next.raiseOnFocus = false;
+		restart |= next.display != config.display;
+	} else if (selectTarget) {
 		bool ambiguous;
 		const auto windows = backend ? backend->windows() : QList<WindowInfo>{};
 		auto match = select_window(windows, next.rule, {}, next.preferredWindow, &ambiguous);
@@ -148,14 +162,15 @@ void M4Capture::stopStream()
 	deadline.stop();
 	pipewire.reset();
 	stream.reset();
-	if (backend && backend->available())
+	if (backend)
 		backend->flush();
 	state->frames->clear();
 }
 
 void M4Capture::status(CaptureStatus next, const QString &detail)
 {
-	state->setStatus(next, detail);
+	state->setStatus(next, detail, generation,
+			 config.target == CaptureConfig::Target::Desktop ? config.display : currentWindowUuid);
 	if (state->callbacks.changed)
 		state->callbacks.changed(*state);
 }
@@ -191,20 +206,31 @@ void M4Capture::reconcile()
 		if (state->showing)
 			state->frames->setEnabled(true);
 	}
-	if (config.rule.appId.isEmpty()) {
+	if (config.target == CaptureConfig::Target::Window && config.rule.appId.isEmpty()) {
 		stopAudio();
 		status(CaptureStatus::Idle, QStringLiteral("Choose a window or enter its application ID."));
 		return;
 	}
-	if (!backend || !backend->available()) {
+	if (!backend ||
+	    !(config.target == CaptureConfig::Target::Desktop ? backend->desktopAvailable() : backend->available())) {
 		stopAudio();
 		auto error = backend ? backend->error() : QStringLiteral("The KWin connection was destroyed.");
+		if (error.isEmpty())
+			error = QStringLiteral("KWin desktop screencast or output discovery is unavailable.");
 		if (stream)
 			failed(error);
 		else
 			status(CaptureStatus::Failed, error);
 		return;
 	}
+	if (config.target == CaptureConfig::Target::Desktop)
+		reconcileDesktop(showing);
+	else
+		reconcileWindow(showing);
+}
+
+void M4Capture::reconcileWindow(bool showing)
+{
 	if (!config.rule.error().isEmpty()) {
 		stopAudio();
 		status(CaptureStatus::Failed, config.rule.error());
@@ -240,6 +266,34 @@ void M4Capture::reconcile()
 	for (const auto &window : windows)
 		if (window.uuid == currentWindowUuid)
 			updateAudio(window);
+}
+
+void M4Capture::reconcileDesktop(bool showing)
+{
+	QList<DisplayInfo> displays;
+	for (const auto &display : backend->displays()) {
+		if (!config.display.isEmpty() && display.name != config.display)
+			continue;
+		displays.append(display);
+	}
+	const bool sameLayout = displays.size() == desktopDisplays.size() &&
+				std::equal(displays.cbegin(), displays.cend(), desktopDisplays.cbegin(),
+					   [](const auto &a, const auto &b) { return a.sameCaptureLayout(b); });
+	if (!sameLayout) {
+		stopStream();
+		retry.stop();
+		desktopDisplays = std::move(displays);
+	}
+	if (desktopDisplays.isEmpty()) {
+		status(CaptureStatus::Waiting, QStringLiteral("Waiting for the selected display."));
+		return;
+	}
+	if (!showing) {
+		status(CaptureStatus::Paused);
+		return;
+	}
+	if (!stream && !retry.isActive())
+		startStream();
 }
 
 void M4Capture::stopAudio()
@@ -298,7 +352,9 @@ void M4Capture::audioFailed(uint64_t attempt, const QString &error)
 void M4Capture::startStream()
 {
 	status(CaptureStatus::Connecting);
-	stream.reset(backend->capture(currentWindowUuid, config.cursor, this));
+	stream.reset(config.target == CaptureConfig::Target::Desktop
+			 ? backend->captureDesktop(config.display, config.cursor, this)
+			 : backend->capture(currentWindowUuid, config.cursor, this));
 	if (!stream) {
 		failed(backend->error());
 		return;

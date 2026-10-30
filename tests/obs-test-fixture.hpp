@@ -20,7 +20,8 @@ extern obs_source_t *currentScene;
 class ObsTestFixture : public QObject
 {
       protected:
-	obs_source_t *createSource(const char *name, obs_data_t *settings, bool showing = true);
+	obs_source_t *createSource(const char *name, obs_data_t *settings, bool showing = true,
+				   const char *id = "m4capture_source");
 	QString status(obs_source_t *source);
 	obs_source_t *source(const char *name, const char *app = "test.app", bool raise = false);
 	QColor renderedPixel(obs_source_t *source);

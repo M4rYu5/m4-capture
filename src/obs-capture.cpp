@@ -21,6 +21,15 @@ CaptureConfig read_capture_config(obs_data_t *settings)
 	return config;
 }
 
+CaptureConfig read_desktop_capture_config(obs_data_t *settings)
+{
+	CaptureConfig config;
+	config.target = CaptureConfig::Target::Desktop;
+	config.display = QString::fromUtf8(obs_data_get_string(settings, "selected_display"));
+	config.cursor = obs_data_get_bool(settings, "capture_cursor");
+	return config;
+}
+
 void write_capture_config(obs_data_t *settings, const CaptureConfig &config)
 {
 	obs_data_set_string(settings, "app_id", config.rule.appId.toUtf8().constData());
@@ -41,18 +50,25 @@ void write_capture_state(obs_data_t *settings, const CaptureState &state)
 {
 	// OBS defers video-source updates. A stream callback may save while a new
 	// audio choice or target is still pending; keep those newer settings.
-	write_capture_config(settings, read_capture_config(settings));
+	if (state.configuration().target == CaptureConfig::Target::Window)
+		write_capture_config(settings, read_capture_config(settings));
 	auto size = state.frames->size();
 	obs_data_set_int(settings, "width", size.width);
 	obs_data_set_int(settings, "height", size.height);
 }
 
-void set_capture_defaults(obs_data_t *settings)
+void set_video_capture_defaults(obs_data_t *settings)
 {
 	const CaptureConfig defaults;
 	obs_data_set_default_int(settings, "width", 1280);
 	obs_data_set_default_int(settings, "height", 720);
 	obs_data_set_default_bool(settings, "capture_cursor", defaults.cursor);
+}
+
+void set_capture_defaults(obs_data_t *settings)
+{
+	set_video_capture_defaults(settings);
+	const CaptureConfig defaults;
 	obs_data_set_default_bool(settings, "capture_audio", defaults.audio);
 	obs_data_set_default_bool(settings, "raise_on_focus", defaults.raiseOnFocus);
 	obs_data_set_default_bool(settings, "disconnect_on_title_mismatch", defaults.rule.disconnectOnTitleMismatch);
@@ -107,9 +123,7 @@ std::shared_ptr<CaptureState> create_obs_capture_state(obs_source_t *source, obs
 		if (scene && raise_source_items(scene, source))
 			obs_frontend_save();
 	};
-	callbacks.error = [](const QString &error) {
-		blog(LOG_WARNING, "[M4Capture] %s", error.toUtf8().constData());
-	};
+	callbacks.error = [](const QString &error) { blog(LOG_WARNING, "[M4Capture] %s", error.toUtf8().constData()); };
 	callbacks.gpu = create_obs_dmabuf_capture();
 	return std::make_shared<CaptureState>(std::clamp<long long>(obs_data_get_int(settings, "width"), 1, 16384),
 					      std::clamp<long long>(obs_data_get_int(settings, "height"), 1, 16384),

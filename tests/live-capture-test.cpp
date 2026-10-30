@@ -21,6 +21,24 @@ class LiveCaptureTest : public ObsTestFixture
 		calldata_free(&params);
 		return result;
 	}
+	int64_t captureGeneration(obs_source_t *source)
+	{
+		calldata_t params{};
+		proc_handler_call(obs_source_get_proc_handler(source), "get_status", &params);
+		auto result = calldata_int(&params, "generation");
+		calldata_free(&params);
+		return result;
+	}
+	bool capturingTargetAfter(obs_source_t *source, const QString &target, int64_t generation)
+	{
+		calldata_t params{};
+		proc_handler_call(obs_source_get_proc_handler(source), "get_status", &params);
+		bool result = QString::fromUtf8(calldata_string(&params, "status")) == "capturing" &&
+			      calldata_int(&params, "generation") > generation &&
+			      QString::fromUtf8(calldata_string(&params, "target")) == target;
+		calldata_free(&params);
+		return result;
+	}
       private slots:
 	void initTestCase()
 	{
@@ -34,6 +52,26 @@ class LiveCaptureTest : public ObsTestFixture
 		QTest::qWait(60);
 	}
 	void cleanupTestCase() { shutdown_capture(); }
+
+	void liveDesktopCapture()
+	{
+		QTRY_VERIFY_WITH_TIMEOUT(!capture_displays().isEmpty(), 5000);
+		OBSDataAutoRelease settings = obs_data_create();
+		OBSSourceAutoRelease target = createSource("Live desktop", settings, true, "m4capture_desktop_source");
+		QVERIFY(target);
+		QVERIFY(!(obs_source_get_output_flags(target) & OBS_SOURCE_AUDIO));
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 10000);
+		QVERIFY(obs_source_get_width(target) > 0);
+		QVERIFY(obs_source_get_height(target) > 0);
+		const auto generation = captureGeneration(target);
+		const auto display = capture_displays().front().name;
+		// Cursor changes create a fresh stream, even on an otherwise static desktop.
+		obs_data_set_string(settings, "selected_display", display.toUtf8().constData());
+		obs_data_set_bool(settings, "capture_cursor", false);
+		obs_source_update(target, settings);
+		QTRY_VERIFY_WITH_TIMEOUT(capturingTargetAfter(target, display, generation), 10000);
+		QCOMPARE(renderedPixel(target).alpha(), 255);
+	}
 
 	void liveM4Capture()
 	{

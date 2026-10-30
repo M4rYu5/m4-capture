@@ -52,6 +52,7 @@ class CaptureTest : public ObsTestFixture
 	{
 		cleanupObs();
 		kwin.clear();
+		kwin.clearDisplays();
 		QTest::qWait(60);
 	}
 	void cleanupTestCase() { shutdown_capture(); }
@@ -79,6 +80,60 @@ class CaptureTest : public ObsTestFixture
 		props = obs_source_properties(target);
 		QVERIFY(!obs_property_button_clicked(obs_properties_get(props, "refresh_windows"), target));
 		QCOMPARE(updates, 1);
+		obs_properties_destroy(props);
+	}
+
+	void desktopSourceCapturesVideoAndSavesSelection()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		kwin.addDisplay({"DP-1", "Main display", {0, 0, 1920, 1080}, 1});
+		kwin.addDisplay({"DP-2", "Second display", {-1280, 0, 1280, 720}, 1});
+		QTRY_COMPARE(capture_displays().size(), 2);
+		OBSDataAutoRelease settings = obs_data_create();
+		// Even injected application-audio settings cannot enable audio on this source.
+		obs_data_set_bool(settings, "capture_audio", true);
+		OBSSourceAutoRelease target = createSource("Desktop", settings, true, "m4capture_desktop_source");
+		QVERIFY(target);
+		QVERIFY(!(obs_source_get_output_flags(target) & OBS_SOURCE_AUDIO));
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QTRY_COMPARE(renderedPixel(target).alpha(), 255);
+		QCOMPARE(video.audioCapturesCreated(), uint32_t(0));
+		QCOMPARE(kwin.requestedRegion, QRect(-1280, 0, 3200, 1080));
+		auto props = obs_source_properties(target);
+		auto picker = obs_properties_get(props, "selected_display");
+		QVERIFY(picker);
+		QCOMPARE(obs_property_list_item_count(picker), size_t(3));
+		QVERIFY(!obs_properties_get(props, "capture_audio"));
+		QVERIFY(!obs_properties_get(props, "selected_window"));
+		QVERIFY(!obs_properties_get(props, "app_id"));
+		QVERIFY(!obs_properties_get(props, "raise_on_focus"));
+		obs_properties_destroy(props);
+		OBSDataAutoRelease updated = obs_source_get_settings(target);
+		obs_data_set_string(updated, "selected_display", "DP-2");
+		obs_data_set_bool(updated, "capture_cursor", false);
+		obs_source_update(target, updated);
+		QTRY_COMPARE(kwin.requestedDisplay, QString("DP-2"));
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QCOMPARE(kwin.cursorMode, uint32_t(1));
+		OBSDataAutoRelease saved = obs_save_source(target);
+		QCOMPARE(QString(obs_data_get_string(saved, "id")), QString("m4capture_desktop_source"));
+		OBSDataAutoRelease serialized = obs_data_create_from_json(obs_data_get_json(saved));
+		obs_data_set_string(serialized, "name", "Restored desktop");
+		OBSSourceAutoRelease restored = obs_load_source(serialized);
+		QVERIFY(restored);
+		OBSDataAutoRelease restoredSettings = obs_source_get_settings(restored);
+		QCOMPARE(QString(obs_data_get_string(restoredSettings, "selected_display")), QString("DP-2"));
+		QVERIFY(!obs_data_get_bool(restoredSettings, "capture_cursor"));
+		QVERIFY(!obs_data_has_user_value(restoredSettings, "app_id"));
+		QVERIFY(!(obs_source_get_output_flags(restored) & OBS_SOURCE_AUDIO));
+		kwin.removeDisplay("DP-2");
+		QTRY_COMPARE(status(target), QString("waiting"));
+		QCOMPARE(renderedPixel(target).alpha(), 0);
+		props = obs_source_properties(target);
+		picker = obs_properties_get(props, "selected_display");
+		QCOMPARE(obs_property_list_item_count(picker), size_t(3));
+		QCOMPARE(QString(obs_property_list_item_string(picker, 2)), QString("DP-2"));
 		obs_properties_destroy(props);
 	}
 

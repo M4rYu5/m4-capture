@@ -7,17 +7,22 @@ namespace
 {
 QObject *captureContext = nullptr;
 KWinConnection *connection = nullptr;
-std::mutex windowsMutex;
+std::mutex snapshotsMutex;
 QList<WindowInfo> windowsSnapshot;
+QList<DisplayInfo> displaysSnapshot;
 
 void ensureConnection()
 {
 	if (connection)
 		return;
 	connection = new KWinConnection(captureContext);
-	QObject::connect(connection, &KWinConnection::changed, captureContext, [] {
-		std::lock_guard<std::mutex> lock(windowsMutex);
+	QObject::connect(connection, &KWinConnection::windowsChanged, captureContext, [] {
+		std::lock_guard<std::mutex> lock(snapshotsMutex);
 		windowsSnapshot = connection->windows();
+	});
+	QObject::connect(connection, &KWinConnection::displaysChanged, captureContext, [] {
+		std::lock_guard<std::mutex> lock(snapshotsMutex);
+		displaysSnapshot = connection->displays();
 	});
 }
 } // namespace
@@ -36,14 +41,21 @@ void shutdown_capture()
 	delete captureContext;
 	captureContext = nullptr;
 	connection = nullptr;
-	std::lock_guard<std::mutex> lock(windowsMutex);
+	std::lock_guard<std::mutex> lock(snapshotsMutex);
 	windowsSnapshot.clear();
+	displaysSnapshot.clear();
 }
 
 QList<WindowInfo> capture_windows()
 {
-	std::lock_guard<std::mutex> lock(windowsMutex);
+	std::lock_guard<std::mutex> lock(snapshotsMutex);
 	return windowsSnapshot;
+}
+
+QList<DisplayInfo> capture_displays()
+{
+	std::lock_guard<std::mutex> lock(snapshotsMutex);
+	return displaysSnapshot;
 }
 
 void queue_capture_update(const std::shared_ptr<CaptureState> &state)

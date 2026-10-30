@@ -1,8 +1,22 @@
 # M4Capture
 
-An OBS Studio window capture plugin for KDE Plasma Wayland with automatic reconnection.
+An OBS Studio window and desktop capture plugin for KDE Plasma Wayland with automatic reconnection.
 
 M4Capture uses KWin's window-management and screencast interfaces with PipeWire video.
+
+## Capture the desktop
+
+Add **Sources → + → Desktop Capture (M4Capture)**. Choose a monitor in **Display**,
+or leave **All displays** selected to capture the combined desktop. **Capture cursor**
+is on by default. This source captures video only; configure audio separately in OBS.
+
+Capture follows source visibility and reconnects automatically. If a selected
+display disconnects, the source clears its video and waits for that display to
+return. All-displays capture updates its bounds when the monitor layout changes.
+Use **Refresh display list** to update the dropdown after connecting a monitor.
+
+Desktop capture requires KWin's screencast interface and the XDG output protocol
+version 2+. Capturing all displays requires screencast protocol version 3+.
 
 ## Choose a window
 
@@ -193,7 +207,7 @@ QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./build/m4capture-live-tests liveM
 
 ## Implementation
 
-- `src/kwin-connection.cpp`: window discovery, focus events, and KWin streams.
+- `src/kwin-connection.cpp`: window/display discovery, focus events, and KWin streams.
 - `src/window-rule.cpp`: application/title matching and stable selection.
 - `src/capture.cpp`: capture lifecycle and automatic reconnection, without OBS dependencies.
 - `src/capture-runtime.cpp`: shared KWin connection, window snapshots, and queued controller ownership.
