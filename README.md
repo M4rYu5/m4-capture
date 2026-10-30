@@ -1,19 +1,18 @@
-# KWinCapture
+# M4Capture
 
 An OBS Studio window capture plugin for KDE Plasma Wayland with automatic reconnection.
 
-KWinCapture uses KWin's window-management and screencast interfaces with PipeWire video.
+M4Capture uses KWin's window-management and screencast interfaces with PipeWire video.
 
 ## Choose a window
 
-Add **Sources → + → KWin Capture** and open Properties. The **Window** dropdown
+Add **Sources → + → Window Capture (M4Capture)** and open Properties. The **Window** dropdown
 lists open windows by application ID and title. Selecting one fills the application
 ID. **Refresh window list** refreshes the choices. There is no portal sharing chooser.
 
 You can also enter an application ID while the application is closed. The saved
 rule waits for that application instead of depending on a particular process or
-window ID. Existing sources from the earlier portal version need a new selection
-once; their scene items and last dimensions are preserved.
+window ID.
 
 If GPU capture is unavailable, a short CPU fallback warning appears directly
 above **Window**. It disappears when GPU capture is active or capture stops.
@@ -127,25 +126,25 @@ A build mode is required; running without one reports an error. Run the same
 command after source changes to update the plugin. Each mode uses a separate
 build directory: `build-debug`, `build-release`, or `build-relwithdebinfo`.
 
-Reopen OBS to load the replacement library. Existing sources keep their source ID
-(`waylandconnect_source`). Native plugins are not hot-reloaded. The script refuses
-to replace the library while OBS is running and requires no sudo.
+Reopen OBS to load the replacement library. Native plugins are not hot-reloaded.
+The script refuses to replace the library while OBS is running and requires no sudo.
 
-The module filename, install directory, locale lookup, and saved source ID retain
-their original internal names for compatibility with existing installations and
-saved scenes. The plugin is displayed as **KWinCapture**, with **KWin Capture** in
-the OBS source list.
+The plugin is named **M4Capture**, with **Window Capture (M4Capture)** in the OBS
+source list. New sources save with the ID `m4capture_source`. This is a fresh
+start without compatibility aliases or settings migration: remove any previous
+plugin installation while OBS is closed, then recreate its sources using the
+new source type.
 
 Installed files:
 
 ```text
-~/.config/obs-studio/plugins/waylandconnect/
-├── bin/64bit/waylandconnect.so
+~/.config/obs-studio/plugins/m4capture/
+├── bin/64bit/m4capture.so
 └── data/locale/en-US.ini
 ```
 
-`XDG_CONFIG_HOME` is respected. `KWINCAPTURE_PLUGIN_DIR` overrides the individual
-plugin directory; `KWINCAPTURE_BUILD_DIR` overrides the chosen build directory.
+`XDG_CONFIG_HOME` is respected. `M4CAPTURE_PLUGIN_DIR` overrides the individual
+plugin directory; `M4CAPTURE_BUILD_DIR` overrides the chosen build directory.
 Compile without installing with:
 
 ```sh
@@ -154,14 +153,14 @@ cmake --build build-debug --parallel
 ```
 
 Launch `obs --verbose`, or `gdb --args obs --verbose`, for debugging a Debug build.
-OBS's current log contains `[KWinCapture]` messages.
+OBS's current log contains `[M4Capture]` messages.
 
 To remove the plugin, close OBS and remove its individual plugin directory.
 
 ## Development checks
 
 ```sh
-cmake -S . -B build -DKWINCAPTURE_BUILD_TESTS=ON
+cmake -S . -B build -DM4CAPTURE_BUILD_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
@@ -179,17 +178,17 @@ The `obs-integration` tests exercise settings, cursor modes, rendering, and
 focus-driven ordering in real OBS scenes/groups. They use simulated capture
 servers and the running Wayland session to initialize libobs graphics.
 
-The separate `kwincapture-live-tests` executable contains real KWin capture tests,
+The separate `m4capture-live-tests` executable contains real KWin capture tests,
 frame-rate diagnostics, and the performance benchmark. It requires KDE Plasma
-Wayland and `KWINCAPTURE_LIVE_TEST=1`; it is built with the test targets but is not
-part of the default CTest run. `kwincapture-tests` always uses simulated capture
+Wayland and `M4CAPTURE_LIVE_TEST=1`; it is built with the test targets but is not
+part of the default CTest run. `m4capture-tests` always uses simulated capture
 servers, regardless of that environment variable.
 
 The live reconnection test captures only its own temporary window, closes it,
 and opens a replacement:
 
 ```sh
-QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-live-tests liveKWinCapture
+QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./build/m4capture-live-tests liveM4Capture
 ```
 
 ## Implementation
@@ -205,7 +204,7 @@ QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build/kwincapture-live-tests l
 - `src/obs-dmabuf.cpp`: cached GPU buffer imports and synchronization.
 - `src/obs-video.cpp`: native CPU texture uploads and shared crop/rotation/flip drawing.
 - `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.
-- `src/kwincapture-source.cpp`: OBS properties, saved configuration, and rendering.
+- `src/m4capture-source.cpp`: OBS properties, saved configuration, and rendering.
 
 Capture configuration and diagnostics are accessed through synchronized snapshots.
 The frame buffer has its own synchronization; controller ownership and callbacks
@@ -252,23 +251,23 @@ A failed GPU capture path stays disabled for that source's lifetime, including
 reconnections; recreating the source or restarting OBS tries GPU capture again.
 HDR remains unsupported.
 
-For diagnosis, launch OBS with `KWINCAPTURE_FORCE_CPU=1` to force the CPU path.
+For diagnosis, launch OBS with `M4CAPTURE_FORCE_CPU=1` to force the CPU path.
 Logs identify `DMA-BUF GPU capture` or `CPU fallback capture`.
 
 The opt-in benchmark captures its own animated window at 1920×1080 and 3840×2160,
 with two seconds of warm-up and ten seconds of measurement per sample:
 
 ```sh
-cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DKWINCAPTURE_BUILD_TESTS=ON
-cmake --build build-release --target kwincapture-live-tests --parallel
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DM4CAPTURE_BUILD_TESTS=ON
+cmake --build build-release --target m4capture-live-tests --parallel
 python3 scripts/benchmark-capture.py --runs 3
 ```
 
-The script runs `kwincapture-live-tests` to compare DMA-BUF and forced CPU fallback,
+The script runs `m4capture-live-tests` to compare DMA-BUF and forced CPU fallback,
 saves raw logs and JSON under `build-release/`, and reports
 median process CPU usage and prepared frame rates. The benchmark defaults to a
-60 fps OBS output clock; `KWINCAPTURE_TEST_FPS_NUM` and `KWINCAPTURE_TEST_FPS_DEN`
-override it. Set `KWINCAPTURE_BENCHMARK_ANIMATION_MS=2` to update the captured
+60 fps OBS output clock; `M4CAPTURE_TEST_FPS_NUM` and `M4CAPTURE_TEST_FPS_DEN`
+override it. Set `M4CAPTURE_BENCHMARK_ANIMATION_MS=2` to update the captured
 window independently of the 16 ms source-draw timer and profile a faster producer.
 `--baseline /path/to/binary`
 also measures a preserved pre-change benchmark executable.
@@ -281,14 +280,14 @@ fallback, or stream teardown (including hiding the source).
 For a short frame-rate diagnostic across an OBS output-rate change, run:
 
 ```sh
-QT_QPA_PLATFORM=wayland KWINCAPTURE_LIVE_TEST=1 ./build-release/kwincapture-live-tests liveFrameRateProfile
+QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./build-release/m4capture-live-tests liveFrameRateProfile
 ```
 
 This logs prepared frames/s at two output rates without enforcing a capture FPS
-limit. Set `KWINCAPTURE_FORCE_CPU=1` to profile CPU fallback.
+limit. Set `M4CAPTURE_FORCE_CPU=1` to profile CPU fallback.
 
 ## License
 
-KWinCapture is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
+M4Capture is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
 
 The bundled Wayland protocol files retain their upstream licenses; see [protocols/README.md](protocols/README.md).

@@ -409,7 +409,7 @@ struct PipeWireAudioCapture::Impl {
 		} catch (const std::system_error &) {
 			return false;
 		}
-		loop = pw_thread_loop_new("kwincapture-audio", nullptr);
+		loop = pw_thread_loop_new("m4capture-audio", nullptr);
 		if (!loop)
 			return false;
 		context = pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0);
@@ -435,8 +435,8 @@ struct PipeWireAudioCapture::Impl {
 			return e;
 		}();
 		pw_registry_add_listener(registry, &registryListener, &registryEvents, this);
-		filter = pw_filter_new(core, "KWinCapture Audio",
-				       pw_properties_new(PW_KEY_NODE_NAME, "KWinCapture Audio", PW_KEY_MEDIA_TYPE,
+		filter = pw_filter_new(core, "M4Capture Audio",
+				       pw_properties_new(PW_KEY_NODE_NAME, "M4Capture Audio", PW_KEY_MEDIA_TYPE,
 							 "Audio", PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_CLASS,
 							 "Stream/Input/Audio", PW_KEY_NODE_AUTOCONNECT, "false",
 							 PW_KEY_NODE_VIRTUAL, "true", PW_KEY_NODE_WANT_DRIVER, "true",

@@ -11,7 +11,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-QString TestVideo::socketPath() const { return directory.path() + "/pipewire-wc-test"; }
+QString TestVideo::socketPath() const { return directory.path() + "/pipewire-m4capture-test"; }
 
 TestVideo::~TestVideo()
 {
@@ -46,7 +46,7 @@ bool TestVideo::start()
 	if (!config.open(QIODevice::WriteOnly))
 		return false;
 	config.write(R"(
-context.properties = { core.daemon = true core.name = pipewire-wc-test support.dbus = false }
+context.properties = { core.daemon = true core.name = pipewire-m4capture-test support.dbus = false }
 context.spa-libs = { support.* = support/libspa-support }
 context.modules = [
   { name = libpipewire-module-protocol-native }
@@ -75,7 +75,7 @@ context.objects = [
 		return false;
 	}
 	pw_init(nullptr, nullptr);
-	loop = pw_thread_loop_new("wc-test-video", nullptr);
+	loop = pw_thread_loop_new("m4capture-test-video", nullptr);
 	if (!loop)
 		return false;
 	context = pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0);
@@ -141,8 +141,8 @@ bool TestVideo::setProducerActive(bool active)
 bool TestVideo::startProducer()
 {
 	pw_thread_loop_lock(loop);
-	producer = pw_stream_new(core, "wc-test-video",
-				 pw_properties_new(PW_KEY_NODE_NAME, "wc-test-video", PW_KEY_MEDIA_TYPE, "Video",
+	producer = pw_stream_new(core, "m4capture-test-video",
+				 pw_properties_new(PW_KEY_NODE_NAME, "m4capture-test-video", PW_KEY_MEDIA_TYPE, "Video",
 						   PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_CLASS, "Video/Source",
 						   PW_KEY_NODE_WANT_DRIVER, "true", nullptr));
 	static const pw_stream_events events = [] {
@@ -187,9 +187,9 @@ void TestVideo::global(void *data, uint32_t id, uint32_t, const char *type, uint
 	if (std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
 		auto name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
 		self->nodes[id] = name ? name : "";
-		if (self->nodes[id] == "KWinCapture Audio")
+		if (self->nodes[id] == "M4Capture Audio")
 			++self->audioCaptures;
-		if (self->nodes[id] == "wc-test-video") {
+		if (self->nodes[id] == "m4capture-test-video") {
 			auto serial = spa_dict_lookup(props, PW_KEY_OBJECT_SERIAL);
 			self->producerSerial = serial ? std::stoull(serial) : 0;
 			self->producerNode = id;
@@ -211,7 +211,7 @@ void TestVideo::tryLink()
 	for (auto &[id, port] : ports) {
 		if (port.second && port.first == producerNode)
 			output = id;
-		if (!port.second && nodes[port.first] == "KWinCapture") {
+		if (!port.second && nodes[port.first] == "M4Capture") {
 			input = id;
 			inputNode = port.first;
 		}

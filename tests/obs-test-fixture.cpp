@@ -16,7 +16,7 @@ extern "C" const char *obs_module_text(const char *text) { return text; }
 
 obs_source_t *ObsTestFixture::createSource(const char *name, obs_data_t *settings, bool showing)
 {
-	auto source = obs_source_create("waylandconnect_source", name, settings, nullptr);
+	auto source = obs_source_create("m4capture_source", name, settings, nullptr);
 	if (source && showing) {
 		// Model a properties preview for tests that render a standalone source.
 		obs_source_inc_showing(source);

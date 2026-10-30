@@ -109,6 +109,8 @@ class CaptureTest : public ObsTestFixture
 		obs_properties_destroy(props);
 		QTest::qWait(80);
 		OBSDataAutoRelease saved = obs_save_source(target);
+		QCOMPARE(QString(obs_data_get_string(saved, "id")), QString("m4capture_source"));
+		QCOMPARE(QString(obs_data_get_string(saved, "versioned_id")), QString("m4capture_source"));
 		OBSDataAutoRelease config = obs_data_get_obj(saved, "settings");
 		QCOMPARE(QString(obs_data_get_string(config, "app_id")), QString("test.app"));
 		QCOMPARE(QString(obs_data_get_string(config, "title_filter")), QString("title"));
@@ -116,6 +118,20 @@ class CaptureTest : public ObsTestFixture
 		QVERIFY(!obs_data_get_bool(config, "capture_cursor"));
 		QVERIFY(obs_data_get_bool(config, "capture_audio"));
 		QVERIFY(!obs_data_get_bool(config, "disconnect_on_title_mismatch"));
+		// Reload the serialized source, including its renamed type and saved settings.
+		OBSDataAutoRelease serialized = obs_data_create_from_json(obs_data_get_json(saved));
+		obs_data_set_string(serialized, "name", "Restored settings");
+		OBSSourceAutoRelease restored = obs_load_source(serialized);
+		QVERIFY(restored);
+		QCOMPARE(QString(obs_source_get_id(restored)), QString("m4capture_source"));
+		OBSDataAutoRelease restoredSettings = obs_source_get_settings(restored);
+		QCOMPARE(QString(obs_data_get_string(restoredSettings, "app_id")), QString("test.app"));
+		QCOMPARE(QString(obs_data_get_string(restoredSettings, "selected_window")), QString("pick"));
+		QCOMPARE(QString(obs_data_get_string(restoredSettings, "title_filter")), QString("title"));
+		QVERIFY(obs_data_get_bool(restoredSettings, "raise_on_focus"));
+		QVERIFY(!obs_data_get_bool(restoredSettings, "capture_cursor"));
+		QVERIFY(obs_data_get_bool(restoredSettings, "capture_audio"));
+		QVERIFY(!obs_data_get_bool(restoredSettings, "disconnect_on_title_mismatch"));
 	}
 
 	void applicationAudioFollowsSettingsVisibilityAndTarget()
@@ -155,7 +171,7 @@ class CaptureTest : public ObsTestFixture
 		QTest::qWait(100);
 		QCOMPARE(samples.count.load(), uint64_t(0));
 		int requests = kwin.captureRequests;
-		qputenv("PIPEWIRE_REMOTE", "/nonexistent/kwincapture-audio-test");
+		qputenv("PIPEWIRE_REMOTE", "/nonexistent/m4capture-audio-test");
 		auto restoreRemote = qScopeGuard([&] { qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8()); });
 		obs_data_set_bool(settings, "capture_audio", true);
 		obs_source_update(target, settings);

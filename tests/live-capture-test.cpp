@@ -24,8 +24,8 @@ class LiveCaptureTest : public ObsTestFixture
       private slots:
 	void initTestCase()
 	{
-		if (!qEnvironmentVariableIsSet("KWINCAPTURE_LIVE_TEST"))
-			QSKIP("Set KWINCAPTURE_LIVE_TEST=1 to capture temporary test windows on KDE Plasma Wayland.");
+		if (!qEnvironmentVariableIsSet("M4CAPTURE_LIVE_TEST"))
+			QSKIP("Set M4CAPTURE_LIVE_TEST=1 to capture temporary test windows on KDE Plasma Wayland.");
 		initialize_capture();
 	}
 	void cleanup()
@@ -35,12 +35,12 @@ class LiveCaptureTest : public ObsTestFixture
 	}
 	void cleanupTestCase() { shutdown_capture(); }
 
-	void liveKWinCapture()
+	void liveM4Capture()
 	{
 		auto initialImports = dmabuf_import_stats();
 		auto makeWindow = [] {
 			auto w = std::make_unique<QWidget>(nullptr, Qt::FramelessWindowHint);
-			w->setWindowTitle("KWinCapture live check");
+			w->setWindowTitle("M4Capture live check");
 			w->setFixedSize(160, 90);
 			w->setStyleSheet("background-color: rgb(224, 128, 32)");
 			w->show();
@@ -51,10 +51,10 @@ class LiveCaptureTest : public ObsTestFixture
 						 auto windows = capture_windows();
 						 return std::any_of(
 						     windows.begin(), windows.end(),
-						     [](const WindowInfo &w) { return w.appId == "kwincapture-test"; });
+						     [](const WindowInfo &w) { return w.appId == "m4capture-test"; });
 					 })(),
 					 5000);
-		OBSSourceAutoRelease target = source("Live target", "kwincapture-test");
+		OBSSourceAutoRelease target = source("Live target", "m4capture-test");
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
 		auto pixel = renderedPixel(target);
 		QCOMPARE(pixel.alpha(), 255);
@@ -117,7 +117,7 @@ class LiveCaptureTest : public ObsTestFixture
 		auto reject = std::make_shared<RejectImport>(gpu);
 		auto initialImports = dmabuf_import_stats();
 		QWidget window;
-		window.setWindowTitle("KWinCapture fallback check");
+		window.setWindowTitle("M4Capture fallback check");
 		window.setFixedSize(160, 90);
 		window.setStyleSheet("background-color: rgb(224, 128, 32)");
 		window.show();
@@ -127,7 +127,7 @@ class LiveCaptureTest : public ObsTestFixture
 		auto state = std::make_shared<CaptureState>(160, 90, callbacks);
 		auto cleanup = qScopeGuard([&] { release_capture(state); });
 		CaptureConfig config;
-		config.rule.appId = "kwincapture-test";
+		config.rule.appId = "m4capture-test";
 		state->configure(config);
 		queue_capture_update(state);
 		QTRY_COMPARE_WITH_TIMEOUT(state->frames->mode(), FrameBuffer::Mode::DmaBuf, 8000);
@@ -181,7 +181,7 @@ class LiveCaptureTest : public ObsTestFixture
 			void clearImports() override { delegate->clearImports(); }
 		};
 		QWidget window(nullptr, Qt::FramelessWindowHint);
-		window.setWindowTitle("KWinCapture hidden source check");
+		window.setWindowTitle("M4Capture hidden source check");
 		window.setFixedSize(160, 90);
 		window.setStyleSheet("background-color: rgb(220, 40, 80)");
 		window.show();
@@ -193,7 +193,7 @@ class LiveCaptureTest : public ObsTestFixture
 		auto state = std::make_shared<CaptureState>(160, 90, callbacks);
 		auto cleanup = qScopeGuard([&] { release_capture(state); });
 		CaptureConfig config;
-		config.rule.appId = "kwincapture-test";
+		config.rule.appId = "m4capture-test";
 		state->configure(config);
 		queue_capture_update(state);
 		QTRY_COMPARE_WITH_TIMEOUT(state->diagnostics().status, CaptureStatus::Capturing, 8000);
@@ -237,7 +237,7 @@ class LiveCaptureTest : public ObsTestFixture
 	void liveFrameRateProfile()
 	{
 		QWidget window;
-		window.setWindowTitle("KWinCapture frame rate check");
+		window.setWindowTitle("M4Capture frame rate check");
 		window.setWindowFlags(Qt::FramelessWindowHint);
 		window.setFixedSize(160, 90);
 		window.show();
@@ -249,7 +249,7 @@ class LiveCaptureTest : public ObsTestFixture
 		});
 		animate.start(2);
 		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
-		OBSSourceAutoRelease target = source("Frame rate target", "kwincapture-test");
+		OBSSourceAutoRelease target = source("Frame rate target", "m4capture-test");
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 8000);
 		obs_video_info original{};
 		QVERIFY(obs_get_video_info(&original));
@@ -279,9 +279,9 @@ class LiveCaptureTest : public ObsTestFixture
 
 	void capturePerformance()
 	{
-		if (!qEnvironmentVariableIsSet("KWINCAPTURE_BENCHMARK_WIDTH"))
+		if (!qEnvironmentVariableIsSet("M4CAPTURE_BENCHMARK_WIDTH"))
 			QSKIP("Opt-in benchmark captures only its own animated window.");
-		const int width = qEnvironmentVariableIntValue("KWINCAPTURE_BENCHMARK_WIDTH");
+		const int width = qEnvironmentVariableIntValue("M4CAPTURE_BENCHMARK_WIDTH");
 		const int height = width == 3840 ? 2160 : 1080;
 		class AnimatedWindow : public QWidget
 		{
@@ -294,14 +294,14 @@ class LiveCaptureTest : public ObsTestFixture
 			}
 		} window;
 		window.setWindowFlags(Qt::FramelessWindowHint);
-		window.setWindowTitle("KWinCapture performance check");
+		window.setWindowTitle("M4Capture performance check");
 		window.setFixedSize(width, height);
 		window.show();
 		QTest::qWait(200);
 		window.setFixedSize(width, height);
 		window.resize(width, height);
 		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 5000);
-		OBSSourceAutoRelease target = source("Performance target", "kwincapture-test");
+		OBSSourceAutoRelease target = source("Performance target", "m4capture-test");
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 15000);
 		QCOMPARE(obs_source_get_width(target), uint32_t(width));
 		QCOMPARE(obs_source_get_height(target), uint32_t(height));
@@ -316,7 +316,7 @@ class LiveCaptureTest : public ObsTestFixture
 		});
 		QVERIFY(render);
 		QTimer animate;
-		const int animationInterval = qEnvironmentVariableIntValue("KWINCAPTURE_BENCHMARK_ANIMATION_MS");
+		const int animationInterval = qEnvironmentVariableIntValue("M4CAPTURE_BENCHMARK_ANIMATION_MS");
 		if (animationInterval > 0) {
 			animate.setTimerType(Qt::PreciseTimer);
 			connect(&animate, &QTimer::timeout, &window, [&] {

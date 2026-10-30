@@ -57,7 +57,7 @@ void queue_capture_update(const std::shared_ptr<CaptureState> &state)
 			    return;
 		    ensureConnection();
 		    if (!state->controller)
-			    new KWinCapture(state, connection, captureContext);
+			    new M4Capture(state, connection, captureContext);
 		    state->controller->update();
 	    },
 	    Qt::QueuedConnection);
