@@ -22,13 +22,13 @@ class DmaBufCapture;
 enum class PipeWireStatus;
 
 // Idle: unconfigured; Waiting: no unique target; Connecting:
-// awaiting frames; Capturing: frames available; Paused: live stream without frames;
+// awaiting frames; Capturing: video frames available or audio capture running;
+// Paused: hidden source or live video stream without frames;
 // Failed: unavailable backend or failed attempt (which may have a retry pending).
 enum class CaptureStatus { Idle, Waiting, Connecting, Capturing, Paused, Failed };
+enum class CaptureMode { Window, Desktop, ApplicationAudio };
 
 struct CaptureConfig {
-	enum class Target { Window, Desktop };
-	Target target = Target::Window;
 	// Empty selects the combined desktop; otherwise this is a stable output name.
 	QString display;
 	WindowRule rule;
@@ -37,6 +37,8 @@ struct CaptureConfig {
 	bool raiseOnFocus = false;
 	bool audio = false;
 };
+
+CaptureConfig normalize_capture_config(CaptureConfig config, CaptureMode mode);
 
 struct CaptureDiagnostics {
 	CaptureStatus status = CaptureStatus::Idle;
@@ -61,7 +63,8 @@ struct CaptureCallbacks {
 class CaptureState
 {
       public:
-	explicit CaptureState(uint32_t width = 1280, uint32_t height = 720, CaptureCallbacks callbacks = {});
+	explicit CaptureState(uint32_t width = 1280, uint32_t height = 720, CaptureCallbacks callbacks = {},
+			      CaptureMode mode = CaptureMode::Window);
 	void configure(const CaptureConfig &config);
 	CaptureConfig configuration() const;
 	CaptureDiagnostics diagnostics() const;
@@ -69,6 +72,7 @@ class CaptureState
 	bool isShowing() const;
 	bool isAlive() const { return alive.load(); }
 	const std::shared_ptr<FrameBuffer> frames;
+	const CaptureMode mode;
 
       private:
 	friend class M4Capture;
@@ -78,6 +82,7 @@ class CaptureState
 	CaptureConfig config;
 	CaptureDiagnostics diagnostic;
 	bool showing = true;
+	bool visibilityResetPending = false;
 	std::atomic<bool> alive{true};
 	std::atomic<bool> audioEnabled{false};
 	const CaptureCallbacks callbacks;

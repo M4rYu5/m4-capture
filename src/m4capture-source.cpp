@@ -3,15 +3,15 @@
 #include <obs-module.h>
 
 struct M4CaptureSource {
-	bool desktop = false;
 	std::shared_ptr<CaptureState> state;
 	OBSWeakSource source;
 	VideoFrame uploadFrame;
-	ObsVideoRenderer renderer;
+	std::unique_ptr<ObsVideoRenderer> renderer;
 };
 
 static const char *sourceName(void *) { return obs_module_text("Source.Name"); }
 static const char *desktopSourceName(void *) { return obs_module_text("Desktop.Name"); }
+static const char *audioSourceName(void *) { return obs_module_text("Source.AudioName"); }
 static void getStatus(void *data, calldata_t *result)
 {
 	auto state = static_cast<M4CaptureSource *>(data)->state;
@@ -27,34 +27,44 @@ static void getStatus(void *data, calldata_t *result)
 static void sourceUpdate(void *opaque, obs_data_t *settings)
 {
 	auto data = static_cast<M4CaptureSource *>(opaque);
-	auto config = data->desktop ? read_desktop_capture_config(settings) : read_capture_config(settings);
-	data->state->configure(config);
-	if (!data->desktop)
+	data->state->configure(data->state->mode == CaptureMode::Desktop ? read_desktop_capture_config(settings)
+									 : read_capture_config(settings));
+	if (data->state->mode != CaptureMode::Desktop)
 		if (auto source = OBSGetStrongRef(data->source))
-			obs_source_set_audio_active(source, config.audio);
+			obs_source_set_audio_active(source, data->state->configuration().audio);
 	queue_capture_update(data->state);
 }
 
-static void *createSource(obs_data_t *settings, obs_source_t *source, bool desktop)
+static void *createSource(obs_data_t *settings, obs_source_t *source, CaptureMode mode)
 {
 	auto data = new M4CaptureSource;
-	data->desktop = desktop;
 	data->source = OBSGetWeakRef(source);
-	data->state = create_obs_capture_state(source, settings);
+	data->state = create_obs_capture_state(source, settings, mode);
+	if (mode != CaptureMode::ApplicationAudio)
+		data->renderer = std::make_unique<ObsVideoRenderer>();
 	data->state->setShowing(false);
 	sourceUpdate(data, settings);
 	auto handler = obs_source_get_proc_handler(source);
 	proc_handler_add(handler,
-			 "void get_status(out string status, out bool busy, out int frames, out bool gpu, out int "
-			 "generation, out string target)",
+			 "void get_status(out string status, out bool busy, out int frames, out bool gpu, "
+			 "out int generation, out string target)",
 			 getStatus, data);
 	return data;
 }
 
-static void *sourceCreate(obs_data_t *settings, obs_source_t *source) { return createSource(settings, source, false); }
+static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
+{
+	return createSource(settings, source, CaptureMode::Window);
+}
+
 static void *desktopSourceCreate(obs_data_t *settings, obs_source_t *source)
 {
-	return createSource(settings, source, true);
+	return createSource(settings, source, CaptureMode::Desktop);
+}
+
+static void *audioSourceCreate(obs_data_t *settings, obs_source_t *source)
+{
+	return createSource(settings, source, CaptureMode::ApplicationAudio);
 }
 
 static void sourceDestroy(void *opaque)
@@ -65,11 +75,10 @@ static void sourceDestroy(void *opaque)
 }
 
 static void sourceDefaults(obs_data_t *settings) { set_capture_defaults(settings); }
-static void desktopSourceDefaults(obs_data_t *settings)
-{
-	set_video_capture_defaults(settings);
-	obs_data_set_default_string(settings, "selected_display", "");
-}
+
+static void desktopSourceDefaults(obs_data_t *settings) { set_capture_defaults(settings, CaptureMode::Desktop); }
+
+static void audioSourceDefaults(obs_data_t *settings) { set_capture_defaults(settings, CaptureMode::ApplicationAudio); }
 
 static void sourceShow(void *opaque)
 {
@@ -128,28 +137,29 @@ static void setHelpDescription(obs_property_t *property, const char *key)
 	obs_property_set_long_description(property, tooltip.constData());
 }
 
-static obs_properties_t *captureProperties(void *opaque)
+static obs_properties_t *captureProperties(void *opaque, CaptureMode mode)
 {
 	auto props = obs_properties_create();
+	CaptureConfig config;
 	bool cpuFallback = false;
 	if (opaque) {
 		auto state = static_cast<M4CaptureSource *>(opaque)->state;
+		config = state->configuration();
 		cpuFallback = state->frames->mode() == FrameBuffer::Mode::Cpu;
 	}
-	auto warning =
-	    obs_properties_add_text(props, "cpu_fallback", obs_module_text("Source.CpuFallback"), OBS_TEXT_INFO);
-	obs_property_text_set_info_type(warning, OBS_TEXT_INFO_WARNING);
-	obs_property_text_set_info_word_wrap(warning, true);
-	obs_property_set_visible(warning, cpuFallback);
-	return props;
-}
-
-static obs_properties_t *sourceProperties(void *opaque)
-{
-	auto props = captureProperties(opaque);
-	CaptureConfig config;
-	if (opaque)
-		config = static_cast<M4CaptureSource *>(opaque)->state->configuration();
+	if (mode == CaptureMode::ApplicationAudio) {
+		auto help = obs_properties_add_text(props, "audio_help", obs_module_text("Source.AudioOnly.Help"),
+						    OBS_TEXT_INFO);
+		obs_property_text_set_info_word_wrap(help, true);
+	} else {
+		auto warning = obs_properties_add_text(props, "cpu_fallback", obs_module_text("Source.CpuFallback"),
+						       OBS_TEXT_INFO);
+		obs_property_text_set_info_type(warning, OBS_TEXT_INFO_WARNING);
+		obs_property_text_set_info_word_wrap(warning, true);
+		obs_property_set_visible(warning, cpuFallback);
+	}
+	if (mode == CaptureMode::Desktop)
+		return props;
 	auto picker = obs_properties_add_list(props, "selected_window", obs_module_text("Source.Window"),
 					      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	setHelpDescription(picker, "Source.Window.Help");
@@ -179,17 +189,25 @@ static obs_properties_t *sourceProperties(void *opaque)
 	auto disconnect = obs_properties_add_bool(props, "disconnect_on_title_mismatch",
 						  obs_module_text("Source.DisconnectOnTitleMismatch"));
 	setHelpDescription(disconnect, "Source.DisconnectOnTitleMismatch.Help");
-	obs_properties_add_bool(props, "capture_cursor", obs_module_text("Source.Cursor"));
-	auto audio = obs_properties_add_bool(props, "capture_audio", obs_module_text("Source.Audio"));
-	setHelpDescription(audio, "Source.Audio.Help");
-	auto focus = obs_properties_add_bool(props, "raise_on_focus", obs_module_text("Source.RaiseOnFocus"));
-	setHelpDescription(focus, "Source.RaiseOnFocus.Help");
+	if (mode == CaptureMode::Window) {
+		obs_properties_add_bool(props, "capture_cursor", obs_module_text("Source.Cursor"));
+		auto audio = obs_properties_add_bool(props, "capture_audio", obs_module_text("Source.Audio"));
+		setHelpDescription(audio, "Source.Audio.Help");
+		auto focus = obs_properties_add_bool(props, "raise_on_focus", obs_module_text("Source.RaiseOnFocus"));
+		setHelpDescription(focus, "Source.RaiseOnFocus.Help");
+	}
 	return props;
+}
+
+static obs_properties_t *sourceProperties(void *opaque) { return captureProperties(opaque, CaptureMode::Window); }
+static obs_properties_t *audioSourceProperties(void *opaque)
+{
+	return captureProperties(opaque, CaptureMode::ApplicationAudio);
 }
 
 static obs_properties_t *desktopSourceProperties(void *opaque)
 {
-	auto props = captureProperties(opaque);
+	auto props = captureProperties(opaque, CaptureMode::Desktop);
 	QString selected;
 	if (opaque)
 		selected = static_cast<M4CaptureSource *>(opaque)->state->configuration().display;
@@ -232,36 +250,62 @@ static void sourceRender(void *opaque, gs_effect_t *)
 	auto update = state->frames->take(data->uploadFrame);
 	if (update == FrameBuffer::Update::Empty)
 		return;
-	data->renderer.render(data->uploadFrame, update == FrameBuffer::Update::Updated);
+	data->renderer->render(data->uploadFrame, update == FrameBuffer::Update::Updated);
+}
+
+static obs_source_info captureSourceInfo()
+{
+	obs_source_info info{};
+	info.type = OBS_SOURCE_TYPE_INPUT;
+	info.destroy = sourceDestroy;
+	info.update = sourceUpdate;
+	info.save = sourceSave;
+	info.show = sourceShow;
+	info.hide = sourceHide;
+	return info;
 }
 
 void register_m4capture_source()
 {
-	obs_source_info info{};
+	auto info = captureSourceInfo();
 	info.id = "m4capture_source";
-	info.type = OBS_SOURCE_TYPE_INPUT;
 	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB;
 	info.get_name = sourceName;
 	info.create = sourceCreate;
-	info.destroy = sourceDestroy;
 	info.get_defaults = sourceDefaults;
 	info.get_properties = sourceProperties;
-	info.update = sourceUpdate;
-	info.save = sourceSave;
 	info.get_width = sourceWidth;
 	info.get_height = sourceHeight;
 	info.video_render = sourceRender;
-	info.show = sourceShow;
-	info.hide = sourceHide;
 	info.icon_type = OBS_ICON_TYPE_WINDOW_CAPTURE;
 	obs_register_source(&info);
+}
 
+void register_m4capture_desktop_source()
+{
+	auto info = captureSourceInfo();
 	info.id = "m4capture_desktop_source";
 	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB;
 	info.get_name = desktopSourceName;
 	info.create = desktopSourceCreate;
 	info.get_defaults = desktopSourceDefaults;
 	info.get_properties = desktopSourceProperties;
+	info.get_width = sourceWidth;
+	info.get_height = sourceHeight;
+	info.video_render = sourceRender;
 	info.icon_type = OBS_ICON_TYPE_DESKTOP_CAPTURE;
+	obs_register_source(&info);
+}
+
+void register_m4capture_audio_source()
+{
+	auto info = captureSourceInfo();
+	info.id = "m4capture_audio_source";
+	info.output_flags = OBS_SOURCE_AUDIO;
+	info.get_name = audioSourceName;
+	info.create = audioSourceCreate;
+	info.get_defaults = audioSourceDefaults;
+	info.get_properties = audioSourceProperties;
+	info.icon_type = OBS_ICON_TYPE_AUDIO_OUTPUT;
 	obs_register_source(&info);
 }

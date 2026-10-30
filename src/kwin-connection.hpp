@@ -4,7 +4,6 @@
 #include "window-rule.hpp"
 
 #include <QObject>
-#include <QSet>
 #include <QSocketNotifier>
 #include <QTimer>
 
@@ -43,6 +42,8 @@ class KWinConnection : public QObject
 	~KWinConnection() override;
 	QList<WindowInfo> windows() const;
 	QList<DisplayInfo> displays() const;
+	bool windowsAvailable() const;
+	bool displaysAvailable() const;
 	bool available() const;
 	bool desktopAvailable() const;
 	QString error() const { return message; }
@@ -61,7 +62,8 @@ class KWinConnection : public QObject
 	QList<WindowInfo> windowSnapshot;
 	QList<DisplayInfo> displaySnapshot;
 	// Proxies are invalidated before their display, even if wrappers outlive us.
-	QSet<KWinStream *> streams;
+	enum class StreamTarget { Window, Desktop, All };
+	std::map<KWinStream *, StreamTarget> streams;
 	wl_display *display = nullptr;
 	wl_registry *registry = nullptr;
 	org_kde_plasma_window_management *management = nullptr;
@@ -79,13 +81,14 @@ class KWinConnection : public QObject
 	bool displayNotificationPending = false;
 	void open();
 	void close();
+	void invalidateStreams(const QString &reason, StreamTarget target = StreamTarget::All);
 	void disconnected(const QString &reason);
 	void notifyWindows();
 	void notifyDisplays();
 	void addWindow(const QString &uuid);
 	void addOutput(uint32_t name, uint32_t version);
 	void describeOutput(Output &output);
-	KWinStream *trackStream(zkde_screencast_stream_unstable_v1 *stream, QObject *parent);
+	KWinStream *trackStream(zkde_screencast_stream_unstable_v1 *stream, QObject *parent, StreamTarget target);
 	static void global(void *, wl_registry *, uint32_t, const char *, uint32_t);
 	static void globalRemoved(void *, wl_registry *, uint32_t);
 };

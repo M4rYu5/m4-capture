@@ -18,13 +18,16 @@ class KWinFixture : public QObject
 {
       public:
 	~KWinFixture() override;
-	bool start();
+	bool start(bool advertiseScreencast = true);
 	void add(const WindowInfo &window);
 	void remove(const QString &uuid);
 	void clear();
 	void focus(const QString &uuid);
 	void title(const QString &uuid, const QString &title);
 	void disconnectClients();
+	void setScreencastAvailable(bool available);
+	void setWindowManagementAvailable(bool available);
+	void setOutputDiscoveryAvailable(bool available);
 	void addDisplay(const DisplayInfo &display);
 	void displayScale(const QString &name, int scale);
 	void displayGeometry(const QString &name, const QRect &geometry, bool done = true);
@@ -50,6 +53,9 @@ class KWinFixture : public QObject
       private:
 	QTemporaryDir directory;
 	wl_display *display = nullptr;
+	wl_global *screencast = nullptr;
+	wl_global *management = nullptr;
+	wl_global *outputManager = nullptr;
 	QSocketNotifier *notifier = nullptr;
 	struct Window {
 		WindowInfo info;

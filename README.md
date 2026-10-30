@@ -1,6 +1,6 @@
 # M4Capture
 
-An OBS Studio window and desktop capture plugin for KDE Plasma Wayland with automatic reconnection.
+An OBS Studio window, desktop, and application audio capture plugin for KDE Plasma Wayland with automatic reconnection.
 
 M4Capture uses KWin's window-management and screencast interfaces with PipeWire video.
 
@@ -77,6 +77,23 @@ and retries PipeWire errors independently of video. Disable overlapping OBS
 desktop audio capture to avoid recording the same sound twice. Audio/video sync
 offsets can be adjusted in OBS Advanced Audio Properties if needed.
 
+## Capture application audio without video
+
+Add **Sources → + → Application Audio Capture (M4Capture)**. Choose a window or
+enter its application ID, just as with Window Capture. The source captures only
+application playback and appears in the OBS audio mixer. It opens no video stream
+and has no cursor, video fallback, or move-to-top controls.
+
+The same title filters, saved target selection, automatic reconnection, and source
+visibility rules apply. A matching window must be open; the source waits while
+the application is closed. Title filters select the target window, while audio
+can include other windows or tabs belonging to that application. Playback stream
+changes and PipeWire errors reconnect automatically. KWin window-management access
+is required; its screencast interface is not needed for this source.
+
+Disable overlapping desktop audio or **Capture application audio** on a Window
+Capture source targeting the same application to avoid duplicate sound.
+
 ## Move to top when focused
 
 Enable this per source in Properties. When its captured window gains focus:
@@ -143,9 +160,11 @@ build directory: `build-debug`, `build-release`, or `build-relwithdebinfo`.
 Reopen OBS to load the replacement library. Native plugins are not hot-reloaded.
 The script refuses to replace the library while OBS is running and requires no sudo.
 
-The plugin is named **M4Capture**, with **Window Capture (M4Capture)** in the OBS
-source list. New sources save with the ID `m4capture_source`. This is a fresh
-start without compatibility aliases or settings migration: remove any previous
+The plugin is named **M4Capture**, with **Window Capture (M4Capture)**,
+**Desktop Capture (M4Capture)**, and **Application Audio Capture (M4Capture)** in
+the OBS source list. Their saved source IDs are `m4capture_source`,
+`m4capture_desktop_source`, and `m4capture_audio_source`, respectively. This is a
+fresh start without compatibility aliases or settings migration: remove any previous
 plugin installation while OBS is closed, then recreate its sources using the
 new source type.
 
