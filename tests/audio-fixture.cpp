@@ -21,7 +21,7 @@ TestAudio::~TestAudio()
 bool TestAudio::start(int fd, const char *appId, std::initializer_list<std::pair<const char *, float>> samples,
 		      uint32_t pid)
 {
-	loop = pw_thread_loop_new("wc-test-audio", nullptr);
+	loop = pw_thread_loop_new("m4capture-test-audio", nullptr);
 	context = loop ? pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0) : nullptr;
 	if (!context) {
 		close(fd);
@@ -31,10 +31,10 @@ bool TestAudio::start(int fd, const char *appId, std::initializer_list<std::pair
 	if (!core)
 		return false;
 	auto props =
-	    pw_properties_new(PW_KEY_NODE_NAME, "wc-test-audio", PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CLASS,
+	    pw_properties_new(PW_KEY_NODE_NAME, "m4capture-test-audio", PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CLASS,
 			      "Stream/Output/Audio", PW_KEY_APP_ID, appId, PW_KEY_NODE_WANT_DRIVER, "true", nullptr);
 	pw_properties_setf(props, PW_KEY_APP_PROCESS_ID, "%u", pid);
-	filter = pw_filter_new(core, "wc-test-audio", props);
+	filter = pw_filter_new(core, "m4capture-test-audio", props);
 	if (!filter)
 		return false;
 	static const pw_filter_events events = [] {

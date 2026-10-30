@@ -13,7 +13,7 @@
 #include <memory>
 #include <mutex>
 
-class KWinCapture;
+class M4Capture;
 class KWinConnection;
 class KWinStream;
 class PipeWireCapture;
@@ -64,7 +64,7 @@ class CaptureState
 	const std::shared_ptr<FrameBuffer> frames;
 
       private:
-	friend class KWinCapture;
+	friend class M4Capture;
 	friend void queue_capture_update(const std::shared_ptr<CaptureState> &);
 	friend void release_capture(const std::shared_ptr<CaptureState> &);
 	mutable std::mutex mutex;
@@ -75,7 +75,7 @@ class CaptureState
 	std::atomic<bool> audioEnabled{false};
 	const CaptureCallbacks callbacks;
 	// Only accessed by the controller and runtime on the Qt UI thread.
-	QPointer<KWinCapture> controller;
+	QPointer<M4Capture> controller;
 	void setStatus(CaptureStatus status, const QString &detail);
 };
 
@@ -87,12 +87,12 @@ QList<WindowInfo> capture_windows();
 const char *capture_status_name(CaptureStatus status);
 
 // Runs on the Qt UI thread; PipeWire callbacks are queued onto this thread.
-class KWinCapture : public QObject
+class M4Capture : public QObject
 {
 	Q_OBJECT
       public:
-	KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *backend, QObject *parent);
-	~KWinCapture() override;
+	M4Capture(std::shared_ptr<CaptureState> state, KWinConnection *backend, QObject *parent);
+	~M4Capture() override;
 	void update();
 
       private:

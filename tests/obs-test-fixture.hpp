@@ -34,7 +34,7 @@ class ObsTestFixture : public QObject
 template <typename Test> int run_obs_tests(int argc, char **argv)
 {
 	QApplication app(argc, argv);
-	app.setDesktopFileName("kwincapture-test");
+	app.setDesktopFileName("m4capture-test");
 	auto display = wl_display_connect(nullptr);
 	if (!display) {
 		qCritical("Tests need a Wayland session for libobs graphics.");
@@ -48,10 +48,10 @@ template <typename Test> int run_obs_tests(int argc, char **argv)
 	auto shutdownObs = qScopeGuard([] { obs_shutdown(); });
 	obs_video_info video{};
 	video.graphics_module = "libobs-opengl";
-	video.fps_num = qEnvironmentVariableIntValue("KWINCAPTURE_TEST_FPS_NUM");
-	video.fps_den = qEnvironmentVariableIntValue("KWINCAPTURE_TEST_FPS_DEN");
+	video.fps_num = qEnvironmentVariableIntValue("M4CAPTURE_TEST_FPS_NUM");
+	video.fps_den = qEnvironmentVariableIntValue("M4CAPTURE_TEST_FPS_DEN");
 	if (!video.fps_num)
-		video.fps_num = qEnvironmentVariableIsSet("KWINCAPTURE_BENCHMARK_WIDTH") ? 60 : 30;
+		video.fps_num = qEnvironmentVariableIsSet("M4CAPTURE_BENCHMARK_WIDTH") ? 60 : 30;
 	if (!video.fps_den)
 		video.fps_den = 1;
 	video.base_width = video.output_width = 320;
@@ -66,7 +66,7 @@ template <typename Test> int run_obs_tests(int argc, char **argv)
 	audio.speakers = SPEAKERS_STEREO;
 	if (!obs_reset_audio(&audio))
 		return 1;
-	register_kwincapture_source();
+	register_m4capture_source();
 	Test test;
 	int result = QTest::qExec(&test, argc, argv);
 	shutdown_capture();

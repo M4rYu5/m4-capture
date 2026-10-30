@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(KWinCapture VERSION 0.3.0 LANGUAGES C CXX)
+project(M4Capture VERSION 0.3.0 LANGUAGES C CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(FATAL_ERROR "KWinCapture currently targets Linux.")
+  message(FATAL_ERROR "M4Capture currently targets Linux.")
 endif()
 
 find_package(libobs REQUIRED CONFIG)
@@ -60,22 +60,20 @@ set(OBS_SOURCES
   src/obs-capture.cpp src/obs-capture.hpp
   src/obs-graphics.hpp
   src/focus-order.cpp
-  src/kwincapture-source.cpp
+  src/m4capture-source.cpp
   src/obs-dmabuf.cpp src/obs-dmabuf.hpp
   src/obs-video.cpp src/obs-video.hpp
 )
-add_library(kwincapture MODULE src/plugin.cpp ${OBS_SOURCES})
-target_link_libraries(kwincapture PRIVATE
+add_library(m4capture MODULE src/plugin.cpp ${OBS_SOURCES})
+target_link_libraries(m4capture PRIVATE
   capture-core OBS::libobs OBS::obs-frontend-api PkgConfig::DRM OpenGL::GL
 )
-target_compile_features(kwincapture PRIVATE cxx_std_17)
-target_compile_options(kwincapture PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(kwincapture PRIVATE
-  KWINCAPTURE_VERSION="${PROJECT_VERSION}"
+target_compile_features(m4capture PRIVATE cxx_std_17)
+target_compile_options(m4capture PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(m4capture PRIVATE
+  M4CAPTURE_VERSION="${PROJECT_VERSION}"
 )
-set_target_properties(kwincapture PROPERTIES
-  # Keep the installed module filename stable for existing installations.
-  OUTPUT_NAME "waylandconnect"
+set_target_properties(m4capture PROPERTIES
   PREFIX ""
   C_VISIBILITY_PRESET hidden
   CXX_VISIBILITY_PRESET hidden
@@ -83,12 +81,12 @@ set_target_properties(kwincapture PROPERTIES
 )
 
 # CMAKE_INSTALL_PREFIX is the individual plugin directory in OBS's user plugins.
-install(TARGETS kwincapture LIBRARY DESTINATION bin/64bit)
+install(TARGETS m4capture LIBRARY DESTINATION bin/64bit)
 install(DIRECTORY data/ DESTINATION data)
 install(FILES LICENSE DESTINATION .)
 
-option(KWINCAPTURE_BUILD_TESTS "Build window matching and capture lifecycle tests" OFF)
-if(KWINCAPTURE_BUILD_TESTS)
+option(M4CAPTURE_BUILD_TESTS "Build window matching and capture lifecycle tests" OFF)
+if(M4CAPTURE_BUILD_TESTS)
   enable_testing()
   find_package(OpenGL REQUIRED COMPONENTS EGL)
   find_package(Qt6 REQUIRED COMPONENTS Test Widgets)
@@ -154,18 +152,18 @@ if(KWINCAPTURE_BUILD_TESTS)
   )
   set_target_properties(obs-test-support PROPERTIES AUTOMOC ON)
 
-  add_executable(kwincapture-tests
+  add_executable(m4capture-tests
     tests/capture-test.cpp tests/video-fixture.cpp tests/audio-fixture.cpp tests/kwin-fixture.cpp
     ${TEST_PROTOCOL_HEADERS}
   )
-  target_include_directories(kwincapture-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-  target_link_libraries(kwincapture-tests PRIVATE obs-test-support PkgConfig::WAYLAND_SERVER)
-  set_target_properties(kwincapture-tests PROPERTIES AUTOMOC ON)
-  add_test(NAME obs-integration COMMAND $<TARGET_FILE:kwincapture-tests>)
+  target_include_directories(m4capture-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(m4capture-tests PRIVATE obs-test-support PkgConfig::WAYLAND_SERVER)
+  set_target_properties(m4capture-tests PROPERTIES AUTOMOC ON)
+  add_test(NAME obs-integration COMMAND $<TARGET_FILE:m4capture-tests>)
   set_tests_properties(obs-integration PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
   # Live compositor tests and profiling remain explicit opt-in commands, outside CTest.
-  add_executable(kwincapture-live-tests tests/live-capture-test.cpp)
-  target_link_libraries(kwincapture-live-tests PRIVATE obs-test-support)
-  set_target_properties(kwincapture-live-tests PROPERTIES AUTOMOC ON)
+  add_executable(m4capture-live-tests tests/live-capture-test.cpp)
+  target_link_libraries(m4capture-live-tests PRIVATE obs-test-support)
+  set_target_properties(m4capture-live-tests PROPERTIES AUTOMOC ON)
 endif()

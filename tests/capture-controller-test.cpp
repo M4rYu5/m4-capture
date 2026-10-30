@@ -257,8 +257,8 @@ class CaptureControllerTest : public QObject
 		CaptureConfig config;
 		config.rule.appId = "test.app";
 		state->configure(config);
-		auto controller = std::make_unique<KWinCapture>(state, &backend, nullptr);
-		QPointer<KWinCapture> controllerGuard = controller.get();
+		auto controller = std::make_unique<M4Capture>(state, &backend, nullptr);
+		QPointer<M4Capture> controllerGuard = controller.get();
 		controller->update();
 		QTRY_COMPARE(kwin.requestedWindow, QString("closing"));
 		QSocketNotifier *reader = nullptr;
@@ -318,7 +318,7 @@ class CaptureControllerTest : public QObject
 		CaptureConfig config;
 		config.rule.appId = "test.app";
 		state->configure(config);
-		auto controller = std::make_unique<KWinCapture>(state, backend.get(), nullptr);
+		auto controller = std::make_unique<M4Capture>(state, backend.get(), nullptr);
 		controller->update();
 		QTRY_COMPARE(kwin.requestedWindow, QString("controller"));
 		backend.reset();
@@ -388,7 +388,7 @@ class CaptureControllerTest : public QObject
 		config.rule.appId = "test.app";
 		config.audio = true;
 		target->configure(config);
-		KWinCapture controller(target, &backend, nullptr);
+		M4Capture controller(target, &backend, nullptr);
 		controller.update();
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QTRY_VERIFY(samples.load() > 0);

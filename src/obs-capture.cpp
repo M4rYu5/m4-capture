@@ -95,7 +95,7 @@ std::shared_ptr<CaptureState> create_obs_capture_state(obs_source_t *source, obs
 			return;
 		obs_source_update_properties(source);
 		if (mode != FrameBuffer::Mode::None)
-			blog(LOG_INFO, "[KWinCapture] %s capture",
+			blog(LOG_INFO, "[M4Capture] %s capture",
 			     mode == FrameBuffer::Mode::DmaBuf ? "DMA-BUF GPU" : "CPU fallback");
 	};
 	callbacks.focused = [weak] {
@@ -108,7 +108,7 @@ std::shared_ptr<CaptureState> create_obs_capture_state(obs_source_t *source, obs
 			obs_frontend_save();
 	};
 	callbacks.error = [](const QString &error) {
-		blog(LOG_WARNING, "[KWinCapture] %s", error.toUtf8().constData());
+		blog(LOG_WARNING, "[M4Capture] %s", error.toUtf8().constData());
 	};
 	callbacks.gpu = create_obs_dmabuf_capture();
 	return std::make_shared<CaptureState>(std::clamp<long long>(obs_data_get_int(settings, "width"), 1, 16384),

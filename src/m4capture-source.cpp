@@ -2,7 +2,7 @@
 #include "obs-video.hpp"
 #include <obs-module.h>
 
-struct WaylandSource {
+struct M4CaptureSource {
 	std::shared_ptr<CaptureState> state;
 	OBSWeakSource source;
 	VideoFrame uploadFrame;
@@ -12,7 +12,7 @@ struct WaylandSource {
 static const char *sourceName(void *) { return obs_module_text("Source.Name"); }
 static void getStatus(void *data, calldata_t *result)
 {
-	auto state = static_cast<WaylandSource *>(data)->state;
+	auto state = static_cast<M4CaptureSource *>(data)->state;
 	auto diagnostic = state->diagnostics();
 	calldata_set_string(result, "status", capture_status_name(diagnostic.status));
 	calldata_set_bool(result, "busy", diagnostic.status == CaptureStatus::Connecting);
@@ -22,7 +22,7 @@ static void getStatus(void *data, calldata_t *result)
 
 static void sourceUpdate(void *opaque, obs_data_t *settings)
 {
-	auto data = static_cast<WaylandSource *>(opaque);
+	auto data = static_cast<M4CaptureSource *>(opaque);
 	auto config = read_capture_config(settings);
 	data->state->configure(config);
 	if (auto source = OBSGetStrongRef(data->source))
@@ -32,7 +32,7 @@ static void sourceUpdate(void *opaque, obs_data_t *settings)
 
 static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
 {
-	auto data = new WaylandSource;
+	auto data = new M4CaptureSource;
 	data->source = OBSGetWeakRef(source);
 	data->state = create_obs_capture_state(source, settings);
 	data->state->setShowing(false);
@@ -45,7 +45,7 @@ static void *sourceCreate(obs_data_t *settings, obs_source_t *source)
 
 static void sourceDestroy(void *opaque)
 {
-	auto data = static_cast<WaylandSource *>(opaque);
+	auto data = static_cast<M4CaptureSource *>(opaque);
 	release_capture(data->state);
 	delete data;
 }
@@ -54,28 +54,28 @@ static void sourceDefaults(obs_data_t *settings) { set_capture_defaults(settings
 
 static void sourceShow(void *opaque)
 {
-	auto state = static_cast<WaylandSource *>(opaque)->state;
+	auto state = static_cast<M4CaptureSource *>(opaque)->state;
 	state->setShowing(true);
 	queue_capture_update(state);
 }
 
 static void sourceHide(void *opaque)
 {
-	auto state = static_cast<WaylandSource *>(opaque)->state;
+	auto state = static_cast<M4CaptureSource *>(opaque)->state;
 	state->setShowing(false);
 	queue_capture_update(state);
 }
 
 static void sourceSave(void *opaque, obs_data_t *settings)
 {
-	auto state = static_cast<WaylandSource *>(opaque)->state;
+	auto state = static_cast<M4CaptureSource *>(opaque)->state;
 	write_capture_state(settings, *state);
 }
 
 static bool refreshClicked(obs_properties_t *, obs_property_t *, void *data)
 {
 	if (data) {
-		auto source = OBSGetStrongRef(static_cast<WaylandSource *>(data)->source);
+		auto source = OBSGetStrongRef(static_cast<M4CaptureSource *>(data)->source);
 		if (source)
 			obs_source_update_properties(source);
 	}
@@ -86,7 +86,7 @@ static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, o
 {
 	if (!opaque)
 		return false;
-	auto state = static_cast<WaylandSource *>(opaque)->state;
+	auto state = static_cast<M4CaptureSource *>(opaque)->state;
 	auto uuid = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
 	if (state->configuration().preferredWindow == uuid)
 		return false;
@@ -115,7 +115,7 @@ static obs_properties_t *sourceProperties(void *opaque)
 	CaptureConfig config;
 	bool cpuFallback = false;
 	if (opaque) {
-		auto state = static_cast<WaylandSource *>(opaque)->state;
+		auto state = static_cast<M4CaptureSource *>(opaque)->state;
 		config = state->configuration();
 		cpuFallback = state->frames->mode() == FrameBuffer::Mode::Cpu;
 	}
@@ -163,18 +163,18 @@ static obs_properties_t *sourceProperties(void *opaque)
 
 static uint32_t sourceWidth(void *opaque)
 {
-	auto state = static_cast<WaylandSource *>(opaque)->state;
+	auto state = static_cast<M4CaptureSource *>(opaque)->state;
 	return state->frames->size().width;
 }
 static uint32_t sourceHeight(void *opaque)
 {
-	auto state = static_cast<WaylandSource *>(opaque)->state;
+	auto state = static_cast<M4CaptureSource *>(opaque)->state;
 	return state->frames->size().height;
 }
 
 static void sourceRender(void *opaque, gs_effect_t *)
 {
-	auto data = static_cast<WaylandSource *>(opaque);
+	auto data = static_cast<M4CaptureSource *>(opaque);
 	auto state = data->state;
 	auto update = state->frames->take(data->uploadFrame);
 	if (update == FrameBuffer::Update::Empty)
@@ -182,11 +182,10 @@ static void sourceRender(void *opaque, gs_effect_t *)
 	data->renderer.render(data->uploadFrame, update == FrameBuffer::Update::Updated);
 }
 
-void register_kwincapture_source()
+void register_m4capture_source()
 {
 	obs_source_info info{};
-	// Keep saved OBS scenes compatible across plugin renames.
-	info.id = "waylandconnect_source";
+	info.id = "m4capture_source";
 	info.type = OBS_SOURCE_TYPE_INPUT;
 	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB;
 	info.get_name = sourceName;

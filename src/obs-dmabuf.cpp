@@ -224,7 +224,7 @@ class ObsDmaBufCapture : public DmaBufCapture
 
 std::shared_ptr<DmaBufCapture> create_obs_dmabuf_capture()
 {
-	if (qEnvironmentVariableIsSet("KWINCAPTURE_FORCE_CPU"))
+	if (qEnvironmentVariableIsSet("M4CAPTURE_FORCE_CPU"))
 		return {};
 	GraphicsLock lock;
 	if (gs_get_device_type() != GS_DEVICE_OPENGL)

@@ -3,9 +3,9 @@
 #include <obs-module.h>
 
 OBS_DECLARE_MODULE()
-OBS_MODULE_USE_DEFAULT_LOCALE("waylandconnect", "en-US")
+OBS_MODULE_USE_DEFAULT_LOCALE("m4capture", "en-US")
 
-MODULE_EXPORT const char *obs_module_name() { return "KWinCapture"; }
+MODULE_EXPORT const char *obs_module_name() { return "M4Capture"; }
 
 MODULE_EXPORT const char *obs_module_description()
 {
@@ -15,8 +15,8 @@ MODULE_EXPORT const char *obs_module_description()
 bool obs_module_load()
 {
 	initialize_capture();
-	register_kwincapture_source();
-	blog(LOG_INFO, "[KWinCapture] version %s loaded", KWINCAPTURE_VERSION);
+	register_m4capture_source();
+	blog(LOG_INFO, "[M4Capture] version %s loaded", M4CAPTURE_VERSION);
 	return true;
 }
 

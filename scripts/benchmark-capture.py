@@ -10,7 +10,7 @@ import statistics
 import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--binary", type=Path, default=Path("build-release/kwincapture-live-tests"))
+parser.add_argument("--binary", type=Path, default=Path("build-release/m4capture-live-tests"))
 parser.add_argument("--baseline", type=Path, help="Preserved pre-change benchmark executable")
 parser.add_argument("--runs", type=int, default=3)
 parser.add_argument("--output", type=Path, default=Path("build-release/capture-performance.json"))
@@ -27,10 +27,10 @@ for width in (1920, 3840):
         for mode in modes:
             environment = os.environ.copy()
             environment.update(QT_QPA_PLATFORM="wayland", QT_SCALE_FACTOR="1",
-                               KWINCAPTURE_LIVE_TEST="1", KWINCAPTURE_BENCHMARK_WIDTH=str(width))
-            environment.pop("KWINCAPTURE_FORCE_CPU", None)
+                               M4CAPTURE_LIVE_TEST="1", M4CAPTURE_BENCHMARK_WIDTH=str(width))
+            environment.pop("M4CAPTURE_FORCE_CPU", None)
             if mode == "cpu-fallback":
-                environment["KWINCAPTURE_FORCE_CPU"] = "1"
+                environment["M4CAPTURE_FORCE_CPU"] = "1"
             binary = args.baseline if mode == "before" else args.binary
             process = subprocess.run([str(binary.resolve()), "capturePerformance"], env=environment,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)

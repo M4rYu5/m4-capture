@@ -82,7 +82,7 @@ const char *capture_status_name(CaptureStatus status)
 	}
 }
 
-KWinCapture::KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *backend, QObject *parent)
+M4Capture::M4Capture(std::shared_ptr<CaptureState> state, KWinConnection *backend, QObject *parent)
     : QObject(parent), state(std::move(state)), backend(backend)
 {
 	Q_ASSERT(QThread::currentThread() == thread());
@@ -104,20 +104,20 @@ KWinCapture::KWinCapture(std::shared_ptr<CaptureState> state, KWinConnection *ba
 	connect(backend, &KWinConnection::changed, this, [this] { reconcile(); });
 }
 
-KWinCapture::~KWinCapture()
+M4Capture::~M4Capture()
 {
 	stopAudio();
 	stopStream();
 }
 
-void KWinCapture::update()
+void M4Capture::update()
 {
 	Q_ASSERT(QThread::currentThread() == thread());
 	applyConfiguration();
 	reconcile();
 }
 
-void KWinCapture::applyConfiguration()
+void M4Capture::applyConfiguration()
 {
 	auto next = state->configuration();
 	bool selectTarget = requiresTargetSelection(next, config);
@@ -142,7 +142,7 @@ void KWinCapture::applyConfiguration()
 	}
 }
 
-void KWinCapture::stopStream()
+void M4Capture::stopStream()
 {
 	++generation;
 	deadline.stop();
@@ -153,21 +153,21 @@ void KWinCapture::stopStream()
 	state->frames->clear();
 }
 
-void KWinCapture::status(CaptureStatus next, const QString &detail)
+void M4Capture::status(CaptureStatus next, const QString &detail)
 {
 	state->setStatus(next, detail);
 	if (state->callbacks.changed)
 		state->callbacks.changed(*state);
 }
 
-void KWinCapture::focused(const WindowInfo &window)
+void M4Capture::focused(const WindowInfo &window)
 {
 	if (window.active && !wasFocused && config.raiseOnFocus && state->callbacks.focused)
 		state->callbacks.focused();
 	wasFocused = window.active;
 }
 
-void KWinCapture::reconcile()
+void M4Capture::reconcile()
 {
 	if (!state->isAlive()) {
 		// Source deletion is queued; stop producing frames while awaiting controller deletion.
@@ -242,7 +242,7 @@ void KWinCapture::reconcile()
 			updateAudio(window);
 }
 
-void KWinCapture::stopAudio()
+void M4Capture::stopAudio()
 {
 	state->audioEnabled = false;
 	++audioGeneration;
@@ -252,7 +252,7 @@ void KWinCapture::stopAudio()
 	audioPid = 0;
 }
 
-void KWinCapture::updateAudio(const WindowInfo &window)
+void M4Capture::updateAudio(const WindowInfo &window)
 {
 	if (!config.audio || !state->callbacks.audio) {
 		stopAudio();
@@ -284,7 +284,7 @@ void KWinCapture::updateAudio(const WindowInfo &window)
 		audioFailed(attempt, QStringLiteral("Could not connect to PipeWire for application audio."));
 }
 
-void KWinCapture::audioFailed(uint64_t attempt, const QString &error)
+void M4Capture::audioFailed(uint64_t attempt, const QString &error)
 {
 	if (attempt != audioGeneration || !state->isAlive())
 		return;
@@ -295,7 +295,7 @@ void KWinCapture::audioFailed(uint64_t attempt, const QString &error)
 		audioRetry.start();
 }
 
-void KWinCapture::startStream()
+void M4Capture::startStream()
 {
 	status(CaptureStatus::Connecting);
 	stream.reset(backend->capture(currentWindowUuid, config.cursor, this));
@@ -316,7 +316,7 @@ void KWinCapture::startStream()
 		deadline.start();
 }
 
-void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &serial)
+void M4Capture::streamReady(uint64_t attempt, uint32_t node, const QString &serial)
 {
 	if (generation != attempt || !state->isAlive() || !state->isShowing())
 		return;
@@ -338,13 +338,13 @@ void KWinCapture::streamReady(uint64_t attempt, uint32_t node, const QString &se
 	deadline.start();
 }
 
-void KWinCapture::streamFailed(uint64_t attempt, const QString &error)
+void M4Capture::streamFailed(uint64_t attempt, const QString &error)
 {
 	if (generation == attempt && state->isAlive())
 		failed(error);
 }
 
-void KWinCapture::streamStatusChanged(uint64_t attempt, PipeWireStatus next)
+void M4Capture::streamStatusChanged(uint64_t attempt, PipeWireStatus next)
 {
 	if (generation != attempt || !state->isAlive() || !state->isShowing())
 		return;
@@ -363,7 +363,7 @@ void KWinCapture::streamStatusChanged(uint64_t attempt, PipeWireStatus next)
 	}
 }
 
-void KWinCapture::failed(const QString &error)
+void M4Capture::failed(const QString &error)
 {
 	stopStream();
 	status(CaptureStatus::Failed, error);
@@ -374,7 +374,7 @@ void KWinCapture::failed(const QString &error)
 		retry.start();
 }
 
-void KWinCapture::persist()
+void M4Capture::persist()
 {
 	if (state->callbacks.save)
 		state->callbacks.save(*state);
