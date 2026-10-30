@@ -173,11 +173,7 @@ void KWinConnection::close()
 	reader = nullptr;
 	delete writer;
 	writer = nullptr;
-	while (!streams.isEmpty()) {
-		auto stream = *streams.begin();
-		streams.remove(stream);
-		stream->invalidate(message.isEmpty() ? QStringLiteral("The KWin Wayland connection closed.") : message);
-	}
+	invalidateStreams(message.isEmpty() ? QStringLiteral("The KWin Wayland connection closed.") : message);
 	entries.clear();
 	outputs.clear();
 	windowSnapshot.clear();
@@ -200,6 +196,15 @@ void KWinConnection::close()
 	display = nullptr;
 }
 
+void KWinConnection::invalidateStreams(const QString &reason, StreamTarget target)
+{
+	// Remove before signaling; a handler may destroy this or another tracked stream.
+	const auto active = streams;
+	for (const auto &[stream, kind] : active)
+		if ((target == StreamTarget::All || target == kind) && streams.erase(stream))
+			stream->invalidate(reason);
+}
+
 void KWinConnection::disconnected(const QString &reason)
 {
 	message = reason;
@@ -209,9 +214,10 @@ void KWinConnection::disconnected(const QString &reason)
 	emit displaysChanged();
 }
 
-bool KWinConnection::available() const { return initialized && management && screencast; }
-
-bool KWinConnection::desktopAvailable() const { return initialized && screencast && outputManager; }
+bool KWinConnection::windowsAvailable() const { return initialized && management; }
+bool KWinConnection::displaysAvailable() const { return initialized && outputManager; }
+bool KWinConnection::available() const { return windowsAvailable() && screencast; }
+bool KWinConnection::desktopAvailable() const { return displaysAvailable() && screencast; }
 
 QList<WindowInfo> KWinConnection::windows() const { return windowSnapshot; }
 
@@ -238,7 +244,7 @@ KWinStream *KWinConnection::capture(const QString &uuid, bool cursor, QObject *p
 								     cursor
 									 ? ZKDE_SCREENCAST_UNSTABLE_V1_POINTER_EMBEDDED
 									 : ZKDE_SCREENCAST_UNSTABLE_V1_POINTER_HIDDEN),
-			   parent);
+			   parent, StreamTarget::Window);
 }
 
 KWinStream *KWinConnection::captureDesktop(const QString &name, bool cursor, QObject *parent)
@@ -254,7 +260,7 @@ KWinStream *KWinConnection::captureDesktop(const QString &name, bool cursor, QOb
 			if (output->info.name == name)
 				return trackStream(
 				    zkde_screencast_unstable_v1_stream_output(screencast, output->proxy, pointer),
-				    parent);
+				    parent, StreamTarget::Desktop);
 		message = QStringLiteral("The selected display is unavailable.");
 		return nullptr;
 	}
@@ -277,14 +283,14 @@ KWinStream *KWinConnection::captureDesktop(const QString &name, bool cursor, QOb
 	return trackStream(zkde_screencast_unstable_v1_stream_region(screencast, geometry.x(), geometry.y(),
 								     geometry.width(), geometry.height(),
 								     wl_fixed_from_int(regionScale), pointer),
-			   parent);
+			   parent, StreamTarget::Desktop);
 }
 
-KWinStream *KWinConnection::trackStream(zkde_screencast_stream_unstable_v1 *proxy, QObject *parent)
+KWinStream *KWinConnection::trackStream(zkde_screencast_stream_unstable_v1 *proxy, QObject *parent, StreamTarget target)
 {
 	auto stream = new KWinStream(proxy, parent);
-	streams.insert(stream);
-	connect(stream, &QObject::destroyed, this, [this, stream] { streams.remove(stream); });
+	streams.emplace(stream, target);
+	connect(stream, &QObject::destroyed, this, [this, stream] { streams.erase(stream); });
 	return stream;
 }
 
@@ -296,7 +302,7 @@ void KWinConnection::notifyWindows()
 	QTimer::singleShot(0, this, [this] {
 		windowNotificationPending = false;
 		QList<WindowInfo> result;
-		if (available())
+		if (windowsAvailable())
 			for (const auto &[uuid, window] : entries)
 				if (window->ready && window->mapped && !window->info.appId.isEmpty())
 					result.append(window->info);
@@ -313,7 +319,7 @@ void KWinConnection::notifyDisplays()
 	QTimer::singleShot(0, this, [this] {
 		displayNotificationPending = false;
 		QList<DisplayInfo> result;
-		if (desktopAvailable())
+		if (displaysAvailable())
 			for (const auto &[id, output] : outputs)
 				if (!output->info.name.isEmpty() && !output->info.geometry.isEmpty())
 					result.append(output->info);
@@ -343,10 +349,17 @@ void KWinConnection::global(void *data, wl_registry *registry, uint32_t name, co
 			return events;
 		}();
 		org_kde_plasma_window_management_add_listener(self->management, &listener, self);
+		if (self->initialized)
+			self->notifyWindows();
 	} else if (!std::strcmp(interface, zkde_screencast_unstable_v1_interface.name)) {
 		self->screencastName = name;
 		self->screencast = static_cast<zkde_screencast_unstable_v1 *>(
 		    wl_registry_bind(registry, name, &zkde_screencast_unstable_v1_interface, std::min(version, 6u)));
+		if (self->initialized) {
+			self->message.clear();
+			self->notifyWindows();
+			self->notifyDisplays();
+		}
 	} else if (!std::strcmp(interface, wl_output_interface.name) && version >= 2) {
 		self->addOutput(name, version);
 	} else if (!std::strcmp(interface, zxdg_output_manager_v1_interface.name) && version >= 2) {
@@ -355,15 +368,45 @@ void KWinConnection::global(void *data, wl_registry *registry, uint32_t name, co
 		    wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, std::min(version, 3u)));
 		for (const auto &[id, output] : self->outputs)
 			self->describeOutput(*output);
+		if (self->initialized)
+			self->notifyDisplays();
 	}
 }
 
 void KWinConnection::globalRemoved(void *data, wl_registry *, uint32_t name)
 {
 	auto self = static_cast<KWinConnection *>(data);
-	if (name == self->managementName || name == self->screencastName || name == self->outputManagerName)
-		QTimer::singleShot(
-		    0, self, [self] { self->disconnected(QStringLiteral("KWin capture interfaces disappeared.")); });
+	if (name == self->managementName) {
+		self->message = QStringLiteral("KWin window management access is unavailable.");
+		org_kde_plasma_window_management_destroy(self->management);
+		self->management = nullptr;
+		self->managementName = 0;
+		self->entries.clear();
+		self->invalidateStreams(self->message, StreamTarget::Window);
+		self->notifyWindows();
+	} else if (name == self->screencastName) {
+		self->message = QStringLiteral("KWin screencast access is unavailable.");
+		zkde_screencast_unstable_v1_destroy(self->screencast);
+		self->screencast = nullptr;
+		self->screencastName = 0;
+		self->invalidateStreams(self->message);
+		self->notifyWindows();
+		self->notifyDisplays();
+	} else if (name == self->outputManagerName) {
+		self->message = QStringLiteral("KWin output discovery is unavailable.");
+		zxdg_output_manager_v1_destroy(self->outputManager);
+		self->outputManager = nullptr;
+		self->outputManagerName = 0;
+		for (const auto &[id, output] : self->outputs) {
+			if (output->description)
+				zxdg_output_v1_destroy(output->description);
+			output->description = nullptr;
+			output->info.geometry = {};
+			output->pending.geometry = {};
+		}
+		self->invalidateStreams(self->message, StreamTarget::Desktop);
+		self->notifyDisplays();
+	}
 	if (self->outputs.erase(name))
 		self->notifyDisplays();
 }

@@ -13,15 +13,14 @@ KWinFixture::~KWinFixture()
 	}
 }
 
-bool KWinFixture::start()
+bool KWinFixture::start(bool advertiseScreencast)
 {
 	display = wl_display_create();
 	if (!display || wl_display_add_socket(display, socketPath().toUtf8().constData()) < 0)
 		return false;
-	if (windowManagement)
-		wl_global_create(display, &org_kde_plasma_window_management_interface, 17, this, bindManagement);
-	wl_global_create(display, &zkde_screencast_unstable_v1_interface, screencastVersion, this, bindScreencast);
-	wl_global_create(display, &zxdg_output_manager_v1_interface, outputManagerVersion, this, bindOutputManager);
+	setWindowManagementAvailable(windowManagement);
+	setScreencastAvailable(advertiseScreencast);
+	setOutputDiscoveryAvailable(true);
 	auto loop = wl_display_get_event_loop(display);
 	notifier = new QSocketNotifier(wl_event_loop_get_fd(loop), QSocketNotifier::Read, this);
 	connect(notifier, &QSocketNotifier::activated, this, [this, loop] {
@@ -34,6 +33,42 @@ bool KWinFixture::start()
 void KWinFixture::flush() { wl_display_flush_clients(display); }
 
 void KWinFixture::disconnectClients() { wl_display_destroy_clients(display); }
+
+void KWinFixture::setScreencastAvailable(bool available)
+{
+	if (available && !screencast)
+		screencast = wl_global_create(display, &zkde_screencast_unstable_v1_interface, screencastVersion, this,
+					      bindScreencast);
+	else if (!available && screencast) {
+		wl_global_destroy(screencast);
+		screencast = nullptr;
+	}
+	flush();
+}
+
+void KWinFixture::setWindowManagementAvailable(bool available)
+{
+	if (available && !management)
+		management =
+		    wl_global_create(display, &org_kde_plasma_window_management_interface, 17, this, bindManagement);
+	else if (!available && management) {
+		wl_global_destroy(management);
+		management = nullptr;
+	}
+	flush();
+}
+
+void KWinFixture::setOutputDiscoveryAvailable(bool available)
+{
+	if (available && !outputManager)
+		outputManager = wl_global_create(display, &zxdg_output_manager_v1_interface, outputManagerVersion, this,
+						 bindOutputManager);
+	else if (!available && outputManager) {
+		wl_global_destroy(outputManager);
+		outputManager = nullptr;
+	}
+	flush();
+}
 
 void KWinFixture::bindManagement(wl_client *client, void *data, uint32_t version, uint32_t id)
 {

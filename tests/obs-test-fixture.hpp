@@ -11,11 +11,28 @@
 #include <obs-nix-platform.h>
 #include <wayland-client.h>
 
+#include <atomic>
 #include <vector>
 
 // Frontend state supplied by the integration tests.
 extern QWidget *mainWindow;
 extern obs_source_t *currentScene;
+
+// Records OBS audio delivery and unregisters its callback before releasing the source.
+class ObsAudioRecorder
+{
+      public:
+	explicit ObsAudioRecorder(obs_source_t *source);
+	~ObsAudioRecorder();
+	ObsAudioRecorder(const ObsAudioRecorder &) = delete;
+	ObsAudioRecorder &operator=(const ObsAudioRecorder &) = delete;
+	std::atomic<uint64_t> count{0};
+	std::atomic<float> left{0}, right{0};
+
+      private:
+	OBSSource source;
+	static void receive(void *data, obs_source_t *, const audio_data *audio, bool);
+};
 
 class ObsTestFixture : public QObject
 {
@@ -68,6 +85,8 @@ template <typename Test> int run_obs_tests(int argc, char **argv)
 	if (!obs_reset_audio(&audio))
 		return 1;
 	register_m4capture_source();
+	register_m4capture_desktop_source();
+	register_m4capture_audio_source();
 	Test test;
 	int result = QTest::qExec(&test, argc, argv);
 	shutdown_capture();

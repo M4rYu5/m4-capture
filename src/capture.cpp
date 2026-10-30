@@ -9,23 +9,42 @@ namespace
 {
 bool requiresTargetSelection(const CaptureConfig &a, const CaptureConfig &b)
 {
-	return a.target != b.target || a.display != b.display || a.rule.appId != b.rule.appId ||
-	       a.rule.title != b.rule.title || a.rule.mode != b.rule.mode ||
+	return a.rule.appId != b.rule.appId || a.rule.title != b.rule.title || a.rule.mode != b.rule.mode ||
 	       a.rule.caseSensitive != b.rule.caseSensitive || a.preferredWindow != b.preferredWindow;
 }
 } // namespace
 
-CaptureState::CaptureState(uint32_t width, uint32_t height, CaptureCallbacks callbacks)
-    : frames(std::make_shared<FrameBuffer>(width, height)), callbacks(std::move(callbacks))
+CaptureConfig normalize_capture_config(CaptureConfig config, CaptureMode mode)
+{
+	if (mode == CaptureMode::ApplicationAudio) {
+		config.audio = true;
+		config.cursor = false;
+		config.raiseOnFocus = false;
+	}
+	if (mode == CaptureMode::Desktop) {
+		config.rule = {};
+		config.preferredWindow.clear();
+		config.audio = false;
+		config.raiseOnFocus = false;
+	} else {
+		config.display.clear();
+	}
+	return config;
+}
+
+CaptureState::CaptureState(uint32_t width, uint32_t height, CaptureCallbacks callbacks, CaptureMode mode)
+    : frames(std::make_shared<FrameBuffer>(width, height)), mode(mode), config(normalize_capture_config({}, mode)),
+      callbacks(std::move(callbacks))
 {
 }
 
 void CaptureState::configure(const CaptureConfig &next)
 {
+	auto normalized = normalize_capture_config(next, mode);
 	std::lock_guard<std::mutex> lock(mutex);
-	if (next.target == CaptureConfig::Target::Desktop || !next.audio || requiresTargetSelection(next, config))
+	if (!normalized.audio || requiresTargetSelection(normalized, config))
 		audioEnabled = false;
-	config = next;
+	config = std::move(normalized);
 }
 
 CaptureConfig CaptureState::configuration() const
@@ -42,16 +61,17 @@ CaptureDiagnostics CaptureState::diagnostics() const
 
 void CaptureState::setShowing(bool next)
 {
-	{
-		std::lock_guard<std::mutex> lock(mutex);
-		showing = next;
-	}
-	// Disable publication immediately, including any copy already in flight.
-	// Only the controller re-enables frames, after joining the old stream.
+	// Stop publication before the controller can acknowledge the visibility reset.
+	// Frame retirement can take the graphics lock, so keep it outside the state lock.
 	if (!next) {
-		frames->setEnabled(false);
 		audioEnabled = false;
+		if (mode != CaptureMode::ApplicationAudio)
+			frames->setEnabled(false);
 	}
+	std::lock_guard<std::mutex> lock(mutex);
+	showing = next;
+	if (!next)
+		visibilityResetPending = true;
 }
 
 bool CaptureState::isShowing() const
@@ -104,11 +124,11 @@ M4Capture::M4Capture(std::shared_ptr<CaptureState> state, KWinConnection *backen
 		failed(QStringLiteral("No video frames were received."));
 	});
 	connect(backend, &KWinConnection::windowsChanged, this, [this] {
-		if (config.target == CaptureConfig::Target::Window)
+		if (this->state->mode != CaptureMode::Desktop)
 			reconcile();
 	});
 	connect(backend, &KWinConnection::displaysChanged, this, [this] {
-		if (config.target == CaptureConfig::Target::Desktop)
+		if (this->state->mode == CaptureMode::Desktop)
 			reconcile();
 	});
 }
@@ -129,13 +149,10 @@ void M4Capture::update()
 void M4Capture::applyConfiguration()
 {
 	auto next = state->configuration();
-	bool selectTarget = requiresTargetSelection(next, config);
+	bool selectTarget = state->mode != CaptureMode::Desktop && requiresTargetSelection(next, config);
 	next.rule = config.rule.updated(next.rule);
-	bool restart = next.cursor != config.cursor || next.target != config.target;
-	if (next.target == CaptureConfig::Target::Desktop) {
-		stopAudio();
-		next.audio = false;
-		next.raiseOnFocus = false;
+	bool restart = next.cursor != config.cursor;
+	if (state->mode == CaptureMode::Desktop) {
 		restart |= next.display != config.display;
 	} else if (selectTarget) {
 		bool ambiguous;
@@ -170,7 +187,7 @@ void M4Capture::stopStream()
 void M4Capture::status(CaptureStatus next, const QString &detail)
 {
 	state->setStatus(next, detail, generation,
-			 config.target == CaptureConfig::Target::Desktop ? config.display : currentWindowUuid);
+			 state->mode == CaptureMode::Desktop ? config.display : currentWindowUuid);
 	if (state->callbacks.changed)
 		state->callbacks.changed(*state);
 }
@@ -190,40 +207,62 @@ void M4Capture::reconcile()
 		stopStream();
 		return;
 	}
-	const bool showing = state->isShowing();
+	bool showing, resetVisibility;
+	{
+		std::lock_guard<std::mutex> lock(state->mutex);
+		showing = state->showing;
+		resetVisibility = state->visibilityResetPending;
+	}
 	if (!showing) {
 		retry.stop();
 		stopAudio();
 		if (stream)
 			stopStream();
-	} else if (!state->frames->isEnabled()) {
+	} else if (resetVisibility) {
 		// A hide/show pair can arrive before this queued update. Always retire
 		// the old producer before allowing publication or rendering again.
 		stopAudio();
 		stopStream();
 		retry.stop();
 		std::lock_guard<std::mutex> lock(state->mutex);
-		if (state->showing)
-			state->frames->setEnabled(true);
+		showing = state->showing;
+		if (showing) {
+			state->visibilityResetPending = false;
+			if (state->mode != CaptureMode::ApplicationAudio)
+				state->frames->setEnabled(true);
+		}
 	}
-	if (config.target == CaptureConfig::Target::Window && config.rule.appId.isEmpty()) {
+	if (state->mode != CaptureMode::Desktop && config.rule.appId.isEmpty()) {
 		stopAudio();
 		status(CaptureStatus::Idle, QStringLiteral("Choose a window or enter its application ID."));
 		return;
 	}
-	if (!backend ||
-	    !(config.target == CaptureConfig::Target::Desktop ? backend->desktopAvailable() : backend->available())) {
+	bool available = false;
+	if (backend) {
+		switch (state->mode) {
+		case CaptureMode::Window:
+			available = backend->available();
+			break;
+		case CaptureMode::Desktop:
+			available = backend->desktopAvailable();
+			break;
+		case CaptureMode::ApplicationAudio:
+			available = backend->windowsAvailable();
+			break;
+		}
+	}
+	if (!available) {
 		stopAudio();
 		auto error = backend ? backend->error() : QStringLiteral("The KWin connection was destroyed.");
 		if (error.isEmpty())
-			error = QStringLiteral("KWin desktop screencast or output discovery is unavailable.");
+			error = QStringLiteral("The required KWin capture interfaces are unavailable.");
 		if (stream)
 			failed(error);
 		else
 			status(CaptureStatus::Failed, error);
 		return;
 	}
-	if (config.target == CaptureConfig::Target::Desktop)
+	if (state->mode == CaptureMode::Desktop)
 		reconcileDesktop(showing);
 	else
 		reconcileWindow(showing);
@@ -261,7 +300,7 @@ void M4Capture::reconcileWindow(bool showing)
 		status(CaptureStatus::Paused);
 		return;
 	}
-	if (!stream && !retry.isActive())
+	if (state->mode == CaptureMode::Window && !stream && !retry.isActive())
 		startStream();
 	for (const auto &window : windows)
 		if (window.uuid == currentWindowUuid)
@@ -336,6 +375,8 @@ void M4Capture::updateAudio(const WindowInfo &window)
 	state->audioEnabled = true;
 	if (!audio->start())
 		audioFailed(attempt, QStringLiteral("Could not connect to PipeWire for application audio."));
+	else if (state->mode == CaptureMode::ApplicationAudio)
+		status(CaptureStatus::Capturing);
 }
 
 void M4Capture::audioFailed(uint64_t attempt, const QString &error)
@@ -343,6 +384,8 @@ void M4Capture::audioFailed(uint64_t attempt, const QString &error)
 	if (attempt != audioGeneration || !state->isAlive())
 		return;
 	stopAudio();
+	if (state->mode == CaptureMode::ApplicationAudio)
+		status(CaptureStatus::Failed, error);
 	if (state->callbacks.error)
 		state->callbacks.error(error);
 	if (config.audio && state->isShowing())
@@ -352,9 +395,8 @@ void M4Capture::audioFailed(uint64_t attempt, const QString &error)
 void M4Capture::startStream()
 {
 	status(CaptureStatus::Connecting);
-	stream.reset(config.target == CaptureConfig::Target::Desktop
-			 ? backend->captureDesktop(config.display, config.cursor, this)
-			 : backend->capture(currentWindowUuid, config.cursor, this));
+	stream.reset(state->mode == CaptureMode::Desktop ? backend->captureDesktop(config.display, config.cursor, this)
+							 : backend->capture(currentWindowUuid, config.cursor, this));
 	if (!stream) {
 		failed(backend->error());
 		return;

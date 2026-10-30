@@ -18,11 +18,11 @@ class CaptureControllerTest : public QObject
 	const bool hadDisplay = qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
 	std::vector<std::shared_ptr<CaptureState>> captures;
 
-	std::shared_ptr<CaptureState> capture(CaptureConfig config = {})
+	std::shared_ptr<CaptureState> capture(CaptureConfig config = {}, CaptureMode mode = CaptureMode::Window)
 	{
 		if (config.rule.appId.isEmpty())
 			config.rule.appId = "test.app";
-		auto state = std::make_shared<CaptureState>();
+		auto state = std::make_shared<CaptureState>(1280, 720, CaptureCallbacks{}, mode);
 		state->configure(config);
 		captures.push_back(state);
 		queue_capture_update(state);
@@ -92,8 +92,7 @@ class CaptureControllerTest : public QObject
 		kwin.addDisplay({"DP-2", "Main", {0, 0, 1920, 1080}, 2});
 		QTRY_COMPARE(capture_displays().size(), 2);
 		CaptureConfig config;
-		config.target = CaptureConfig::Target::Desktop;
-		auto target = capture(config);
+		auto target = capture(config, CaptureMode::Desktop);
 		QTRY_COMPARE(status(target), QString("connecting"));
 		QTRY_COMPARE(kwin.requestedRegion, QRect(-1280, -200, 3200, 1280));
 		QCOMPARE(kwin.requestedScale, int32_t(0));
@@ -149,9 +148,8 @@ class CaptureControllerTest : public QObject
 		QVERIFY(video.startCapture(kwin));
 		kwin.addDisplay({"DP-1", "Main", {0, 0, 1920, 1080}, 1});
 		CaptureConfig config;
-		config.target = CaptureConfig::Target::Desktop;
 		config.display = "HDMI-A-1";
-		auto target = capture(config);
+		auto target = capture(config, CaptureMode::Desktop);
 		QTRY_COMPARE(status(target), QString("waiting"));
 		int requests = kwin.captureRequests;
 		kwin.addDisplay({"HDMI-A-1", "Other", {1920, 0, 1280, 720}, 1});
@@ -204,9 +202,8 @@ class CaptureControllerTest : public QObject
 		KWinConnection backend(nullptr);
 		qputenv("WAYLAND_DISPLAY", kwin.socketPath().toUtf8());
 		QTRY_COMPARE(backend.displays().size(), 1);
-		auto state = std::make_shared<CaptureState>();
+		auto state = std::make_shared<CaptureState>(1280, 720, CaptureCallbacks{}, CaptureMode::Desktop);
 		CaptureConfig config;
-		config.target = CaptureConfig::Target::Desktop;
 		state->configure(config);
 		M4Capture controller(state, &backend, nullptr);
 		controller.update();
@@ -262,6 +259,32 @@ class CaptureControllerTest : public QObject
 		kwin.displayScale("DP-1", 2);
 		QTest::qWait(60);
 		QCOMPARE(displaysChanged.count(), 0);
+	}
+
+	void captureModeNormalizesConfiguration_data()
+	{
+		QTest::addColumn<CaptureMode>("mode");
+		QTest::newRow("window") << CaptureMode::Window;
+		QTest::newRow("desktop") << CaptureMode::Desktop;
+		QTest::newRow("application-audio") << CaptureMode::ApplicationAudio;
+	}
+
+	void captureModeNormalizesConfiguration()
+	{
+		QFETCH(CaptureMode, mode);
+		CaptureState state(1, 1, {}, mode);
+		const bool audioOnly = mode == CaptureMode::ApplicationAudio;
+		QCOMPARE(state.configuration().audio, audioOnly);
+		QCOMPARE(state.configuration().cursor, !audioOnly);
+		CaptureConfig config;
+		config.rule.appId = "test.app";
+		config.raiseOnFocus = true;
+		state.configure(config);
+		auto normalized = state.configuration();
+		QCOMPARE(normalized.audio, audioOnly);
+		QCOMPARE(normalized.cursor, !audioOnly);
+		QCOMPARE(normalized.raiseOnFocus, mode == CaptureMode::Window);
+		QCOMPARE(normalized.rule.appId, mode == CaptureMode::Desktop ? QString{} : config.rule.appId);
 	}
 
 	void windowSnapshotsAreSharedAndRetained()
@@ -547,6 +570,189 @@ class CaptureControllerTest : public QObject
 		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Empty);
 		QTRY_COMPARE(kwin.captureRequests, requests + 1);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+	}
+
+	void audioOnlyDoesNotRequireScreencast()
+	{
+		KWinFixture audioKwin;
+		QVERIFY(audioKwin.start(false));
+		const auto previousDisplay = qgetenv("WAYLAND_DISPLAY");
+		const auto previousRemote = qgetenv("PIPEWIRE_REMOTE");
+		const bool hadRemote = qEnvironmentVariableIsSet("PIPEWIRE_REMOTE");
+		auto restore = qScopeGuard([&] {
+			qputenv("WAYLAND_DISPLAY", previousDisplay);
+			if (hadRemote)
+				qputenv("PIPEWIRE_REMOTE", previousRemote);
+			else
+				qunsetenv("PIPEWIRE_REMOTE");
+		});
+		qputenv("WAYLAND_DISPLAY", audioKwin.socketPath().toUtf8());
+		KWinConnection backend(nullptr);
+		QTRY_VERIFY(backend.windowsAvailable());
+		QVERIFY(!backend.available());
+		TestVideo daemon;
+		QVERIFY(daemon.start());
+		TestAudio producer;
+		QVERIFY(producer.start(daemon.openRemote(), "test.app"));
+		std::atomic<uint64_t> samples{0};
+		CaptureCallbacks callbacks;
+		callbacks.audio = [&](const AudioFrame &frame) {
+			if (frame.data[0][0] == .125f && frame.data[1][0] == -.25f)
+				++samples;
+		};
+		auto target = std::make_shared<CaptureState>(1, 1, std::move(callbacks), CaptureMode::ApplicationAudio);
+		CaptureConfig config;
+		config.rule.appId = "test.app";
+		target->configure(config);
+		M4Capture controller(target, &backend, nullptr);
+		controller.update();
+		QCOMPARE(status(target), QString("waiting"));
+		// A failed audio connection retries without requesting a video stream.
+		qputenv("PIPEWIRE_REMOTE", "/nonexistent/m4capture-audio-test");
+		audioKwin.add({"audio", "test.app", "Application audio", false});
+		QTRY_COMPARE(status(target), QString("failed"));
+		qputenv("PIPEWIRE_REMOTE", daemon.socketPath().toUtf8());
+		QTRY_VERIFY_WITH_TIMEOUT(samples.load() > 0, 5000);
+		QCOMPARE(status(target), QString("capturing"));
+		QCOMPARE(audioKwin.captureRequests, 0);
+		QCOMPARE(target->frames->sequence(), uint64_t(0));
+		// Frame-buffer changes do not control audio lifecycle.
+		target->frames->setEnabled(false);
+		controller.update();
+		QTest::qWait(100);
+		QCOMPARE(daemon.audioCapturesCreated(), uint32_t(1));
+		target->frames->setEnabled(true);
+		target->setShowing(false);
+		target->setShowing(true);
+		controller.update();
+		QTRY_COMPARE(daemon.audioCapturesCreated(), uint32_t(2));
+		target->setShowing(false);
+		controller.update();
+		QCOMPARE(status(target), QString("paused"));
+		auto count = samples.load();
+		QTest::qWait(100);
+		QCOMPARE(samples.load(), count);
+		target->setShowing(true);
+		controller.update();
+		QTRY_VERIFY(samples.load() > count);
+		audioKwin.remove("audio");
+		QTRY_COMPARE(status(target), QString("waiting"));
+		count = samples.load();
+		QTest::qWait(100);
+		QCOMPARE(samples.load(), count);
+		audioKwin.add({"reopened", "test.app", "Reopened", false});
+		QTRY_VERIFY(samples.load() > count);
+		QCOMPARE(audioKwin.captureRequests, 0);
+		QCOMPARE(target->frames->sequence(), uint64_t(0));
+	}
+
+	void captureSourcesHandleInterfaceChanges_data()
+	{
+		QTest::addColumn<int>("interface");
+		QTest::newRow("window-management") << 0;
+		QTest::newRow("output-discovery") << 1;
+		QTest::newRow("screencast") << 2;
+		QTest::newRow("connection") << 3;
+	}
+
+	void captureSourcesHandleInterfaceChanges()
+	{
+		QFETCH(int, interface);
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		TestAudio producer;
+		QVERIFY(producer.start(video.openRemote(), "test.app"));
+		kwin.add({"audio", "test.app", "Application audio", false});
+		kwin.addDisplay({"DP-1", "Display", {0, 0, 160, 90}, 1});
+		auto setAvailable = [&](bool available) {
+			switch (interface) {
+			case 0:
+				kwin.setWindowManagementAvailable(available);
+				break;
+			case 1:
+				kwin.setOutputDiscoveryAvailable(available);
+				break;
+			case 2:
+				kwin.setScreencastAvailable(available);
+				break;
+			case 3:
+				if (!available)
+					kwin.disconnectClients();
+				break;
+			}
+		};
+		auto restoreInterface = qScopeGuard([&] { setAvailable(true); });
+		KWinConnection backend(nullptr);
+		QTRY_VERIFY(backend.available() && backend.desktopAvailable());
+		QTRY_COMPARE(backend.windows().size(), 1);
+		QTRY_COMPARE(backend.displays().size(), 1);
+		std::atomic<uint64_t> samples{0};
+		CaptureCallbacks callbacks;
+		callbacks.audio = [&](const AudioFrame &frame) {
+			if (frame.data[0][0] == .125f)
+				++samples;
+		};
+		auto audioState =
+		    std::make_shared<CaptureState>(1, 1, std::move(callbacks), CaptureMode::ApplicationAudio);
+		auto windowState = std::make_shared<CaptureState>();
+		auto desktopState = std::make_shared<CaptureState>(160, 90, CaptureCallbacks{}, CaptureMode::Desktop);
+		CaptureConfig config;
+		config.rule.appId = "test.app";
+		config.display = "DP-1";
+		audioState->configure(config);
+		windowState->configure(config);
+		desktopState->configure(config);
+		M4Capture audioController(audioState, &backend, nullptr);
+		M4Capture windowController(windowState, &backend, nullptr);
+		M4Capture desktopController(desktopState, &backend, nullptr);
+		audioController.update();
+		windowController.update();
+		desktopController.update();
+		QTRY_VERIFY(samples.load() > 0);
+		QTRY_COMPARE(status(windowState), QString("capturing"));
+		QTRY_COMPARE(status(desktopState), QString("capturing"));
+		QTRY_COMPARE(video.audioCapturesCreated(), uint32_t(1));
+		const auto windowGeneration = windowState->diagnostics().generation;
+		const auto desktopGeneration = desktopState->diagnostics().generation;
+		const bool loseWindows = interface == 0 || interface == 3;
+		const bool loseDisplays = interface == 1 || interface == 3;
+		const bool loseWindowVideo = loseWindows || interface == 2;
+		const bool loseDesktopVideo = loseDisplays || interface == 2;
+		setAvailable(false);
+		QTRY_COMPARE(backend.windowsAvailable(), !loseWindows);
+		QTRY_COMPARE(backend.displaysAvailable(), !loseDisplays);
+		QTRY_COMPARE(backend.available(), !loseWindowVideo);
+		QTRY_COMPARE(backend.desktopAvailable(), !loseDesktopVideo);
+		QTRY_COMPARE(backend.windows().size(), loseWindows ? 0 : 1);
+		QTRY_COMPARE(backend.displays().size(), loseDisplays ? 0 : 1);
+		QTRY_COMPARE(status(windowState), loseWindowVideo ? QString("failed") : QString("capturing"));
+		QTRY_COMPARE(status(desktopState), loseDesktopVideo ? QString("failed") : QString("capturing"));
+		QTRY_COMPARE(status(audioState), loseWindows ? QString("failed") : QString("capturing"));
+		VideoFrame frame;
+		if (loseWindowVideo)
+			QCOMPARE(windowState->frames->take(frame), FrameBuffer::Update::Empty);
+		else
+			QCOMPARE(windowState->diagnostics().generation, windowGeneration);
+		if (loseDesktopVideo)
+			QCOMPARE(desktopState->frames->take(frame), FrameBuffer::Update::Empty);
+		else
+			QCOMPARE(desktopState->diagnostics().generation, desktopGeneration);
+		auto count = samples.load();
+		QTest::qWait(100);
+		if (loseWindows)
+			QCOMPARE(samples.load(), count);
+		else
+			QVERIFY(samples.load() > count);
+		setAvailable(true);
+		QTRY_VERIFY_WITH_TIMEOUT(backend.available() && backend.desktopAvailable(), 5000);
+		QTRY_COMPARE_WITH_TIMEOUT(status(windowState), QString("capturing"), 5000);
+		QTRY_COMPARE_WITH_TIMEOUT(status(desktopState), QString("capturing"), 5000);
+		QTRY_VERIFY(samples.load() > count);
+		QCOMPARE(video.audioCapturesCreated(), loseWindows ? uint32_t(2) : uint32_t(1));
+		if (!loseWindowVideo)
+			QCOMPARE(windowState->diagnostics().generation, windowGeneration);
+		if (!loseDesktopVideo)
+			QCOMPARE(desktopState->diagnostics().generation, desktopGeneration);
 	}
 
 	void audioSurvivesVideoRestarts()

@@ -61,4 +61,4 @@ cmake --build "$build_dir" --parallel
 require_obs_closed
 cmake --install "$build_dir" --prefix "$plugin_dir"
 printf '\nInstalled M4Capture (%s) to %s\n' "$build_type" "$plugin_dir"
-echo "Open OBS, then Sources > + > Window Capture (M4Capture) or Desktop Capture (M4Capture)."
+echo "Open OBS, then Sources > + > Window Capture, Desktop Capture, or Application Audio Capture (M4Capture)."

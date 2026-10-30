@@ -189,6 +189,112 @@ class CaptureTest : public ObsTestFixture
 		QVERIFY(!obs_data_get_bool(restoredSettings, "disconnect_on_title_mismatch"));
 	}
 
+	void audioOnlySettingsAndPickerRoundTrip()
+	{
+		kwin.add({"audio-pick", "test.app", "Audio window", false});
+		QTRY_COMPARE(capture_windows().size(), 1);
+		OBSDataAutoRelease settings = obs_data_create();
+		OBSSourceAutoRelease target =
+		    obs_source_create("m4capture_audio_source", "Audio only settings", settings, nullptr);
+		QVERIFY(target);
+		QCOMPARE(obs_source_get_output_flags(target), uint32_t(OBS_SOURCE_AUDIO));
+		QVERIFY(obs_source_audio_active(target));
+		QCOMPARE(obs_source_get_width(target), uint32_t(0));
+		QCOMPARE(obs_source_get_height(target), uint32_t(0));
+		auto props = obs_source_properties(target);
+		auto destroyProps = qScopeGuard([&] { obs_properties_destroy(props); });
+		QVERIFY(!obs_properties_get(props, "capture_audio"));
+		QVERIFY(!obs_properties_get(props, "capture_cursor"));
+		QVERIFY(!obs_properties_get(props, "raise_on_focus"));
+		QVERIFY(!obs_properties_get(props, "cpu_fallback"));
+		auto picker = obs_properties_get(props, "selected_window");
+		QVERIFY(picker);
+		obs_data_set_string(settings, "selected_window", "audio-pick");
+		QVERIFY(obs_property_modified(picker, settings));
+		QCOMPARE(QString(obs_data_get_string(settings, "app_id")), QString("test.app"));
+		obs_data_set_string(settings, "title_filter", "Audio");
+		obs_data_set_int(settings, "title_match", int(TitleMatch::Contains));
+		obs_data_set_bool(settings, "disconnect_on_title_mismatch", true);
+		// Hidden video/audio switches cannot change this source's purpose.
+		obs_data_set_bool(settings, "capture_audio", false);
+		obs_data_set_bool(settings, "capture_cursor", true);
+		obs_data_set_bool(settings, "raise_on_focus", true);
+		obs_source_update(target, settings);
+		QVERIFY(obs_source_audio_active(target));
+		OBSDataAutoRelease saved = obs_save_source(target);
+		QCOMPARE(QString(obs_data_get_string(saved, "id")), QString("m4capture_audio_source"));
+		OBSDataAutoRelease config = obs_data_get_obj(saved, "settings");
+		QVERIFY(obs_data_get_bool(config, "capture_audio"));
+		QVERIFY(!obs_data_get_bool(config, "capture_cursor"));
+		QVERIFY(!obs_data_get_bool(config, "raise_on_focus"));
+		OBSDataAutoRelease serialized = obs_data_create_from_json(obs_data_get_json(saved));
+		obs_data_set_string(serialized, "name", "Restored audio only");
+		OBSSourceAutoRelease restored = obs_load_source(serialized);
+		QVERIFY(restored);
+		QCOMPARE(QString(obs_source_get_id(restored)), QString("m4capture_audio_source"));
+		QVERIFY(obs_source_audio_active(restored));
+		OBSDataAutoRelease restoredSettings = obs_source_get_settings(restored);
+		QCOMPARE(QString(obs_data_get_string(restoredSettings, "app_id")), QString("test.app"));
+		QCOMPARE(QString(obs_data_get_string(restoredSettings, "selected_window")), QString("audio-pick"));
+		QCOMPARE(QString(obs_data_get_string(restoredSettings, "title_filter")), QString("Audio"));
+		QVERIFY(obs_data_get_bool(restoredSettings, "disconnect_on_title_mismatch"));
+	}
+
+	void audioOnlyFollowsSceneVisibilityAndTarget()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		TestAudio first, second, unrelated;
+		QVERIFY(first.start(video.openRemote(), "test.app"));
+		QVERIFY(second.start(video.openRemote(), "other.app", {{"FL", -.3f}, {"FR", .4f}}));
+		QVERIFY(unrelated.start(video.openRemote(), "unrelated.app"));
+		kwin.add({"first", "test.app", "First", false, 12345});
+		kwin.add({"second", "other.app", "Second", false, 12346});
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		OBSSourceAutoRelease target =
+		    obs_source_create("m4capture_audio_source", "Audio only capture", settings, nullptr);
+		QVERIFY(target);
+		ObsAudioRecorder samples(target);
+		OBSSceneAutoRelease scene = obs_scene_create("Audio only scene");
+		auto sceneSource = obs_scene_get_source(scene);
+		auto item = obs_scene_add(scene, target);
+		QTRY_COMPARE(status(target), QString("paused"));
+		int requests = kwin.captureRequests;
+		const auto imports = dmabuf_import_stats().created;
+		obs_set_output_source(0, sceneSource);
+		auto deactivate = qScopeGuard([&] { obs_set_output_source(0, nullptr); });
+		QTRY_VERIFY_WITH_TIMEOUT(samples.count.load() > 0, 5000);
+		QTRY_VERIFY(std::abs(samples.left.load() - .125f) < .0001f);
+		QVERIFY(std::abs(samples.right.load() + .25f) < .0001f);
+		QCOMPARE(status(target), QString("capturing"));
+		obs_sceneitem_set_visible(item, false);
+		renderedPixel(sceneSource);
+		QTRY_COMPARE(status(target), QString("paused"));
+		auto count = samples.count.load();
+		QTest::qWait(100);
+		QCOMPARE(samples.count.load(), count);
+		obs_sceneitem_set_visible(item, true);
+		renderedPixel(sceneSource);
+		QTRY_VERIFY(samples.count.load() > count);
+		obs_data_set_string(settings, "app_id", "other.app");
+		obs_source_update(target, settings);
+		QTRY_VERIFY(std::abs(samples.left.load() + .3f) < .0001f);
+		QVERIFY(std::abs(samples.right.load() - .4f) < .0001f);
+		obs_data_set_string(settings, "title_filter", "Second");
+		obs_data_set_bool(settings, "disconnect_on_title_mismatch", true);
+		obs_source_update(target, settings);
+		kwin.title("second", "No longer matches");
+		QTRY_COMPARE(status(target), QString("waiting"));
+		count = samples.count.load();
+		QTest::qWait(100);
+		QCOMPARE(samples.count.load(), count);
+		kwin.title("second", "Second again");
+		QTRY_VERIFY(samples.count.load() > count);
+		QCOMPARE(kwin.captureRequests, requests);
+		QCOMPARE(dmabuf_import_stats().created, imports);
+	}
+
 	void applicationAudioFollowsSettingsVisibilityAndTarget()
 	{
 		TestVideo video;
@@ -208,20 +314,7 @@ class CaptureTest : public ObsTestFixture
 			if (showing)
 				obs_source_dec_showing(target);
 		});
-		struct Samples {
-			std::atomic<uint64_t> count{0};
-			std::atomic<float> left{0}, right{0};
-		} samples;
-		auto receive = [](void *data, obs_source_t *, const audio_data *audio, bool) {
-			auto &samples = *static_cast<Samples *>(data);
-			if (audio->frames && audio->data[0] && audio->data[1]) {
-				samples.left = reinterpret_cast<const float *>(audio->data[0])[audio->frames / 2];
-				samples.right = reinterpret_cast<const float *>(audio->data[1])[audio->frames / 2];
-				++samples.count;
-			}
-		};
-		obs_source_add_audio_capture_callback(target, receive, &samples);
-		auto detach = qScopeGuard([&] { obs_source_remove_audio_capture_callback(target, receive, &samples); });
+		ObsAudioRecorder samples(target);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QTest::qWait(100);
 		QCOMPARE(samples.count.load(), uint64_t(0));

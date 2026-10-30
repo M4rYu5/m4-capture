@@ -14,6 +14,23 @@ extern "C" obs_source_t *obs_frontend_get_current_scene() { return obs_source_ge
 extern "C" void obs_frontend_save() { ++saves; }
 extern "C" const char *obs_module_text(const char *text) { return text; }
 
+ObsAudioRecorder::ObsAudioRecorder(obs_source_t *source) : source(source)
+{
+	obs_source_add_audio_capture_callback(source, receive, this);
+}
+
+ObsAudioRecorder::~ObsAudioRecorder() { obs_source_remove_audio_capture_callback(source, receive, this); }
+
+void ObsAudioRecorder::receive(void *data, obs_source_t *, const audio_data *audio, bool)
+{
+	auto &recorder = *static_cast<ObsAudioRecorder *>(data);
+	if (audio->frames && audio->data[0] && audio->data[1]) {
+		recorder.left = reinterpret_cast<const float *>(audio->data[0])[audio->frames / 2];
+		recorder.right = reinterpret_cast<const float *>(audio->data[1])[audio->frames / 2];
+		++recorder.count;
+	}
+}
+
 obs_source_t *ObsTestFixture::createSource(const char *name, obs_data_t *settings, bool showing, const char *id)
 {
 	auto source = obs_source_create(id, name, settings, nullptr);
