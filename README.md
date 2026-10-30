@@ -1,323 +1,126 @@
 # M4Capture
 
-An OBS Studio window, desktop, and application audio capture plugin for KDE Plasma Wayland with automatic reconnection.
+Capture windows, your desktop, and application audio in OBS Studio on KDE Plasma
+Wayland. M4Capture remembers your target and reconnects automatically when a
+window reopens or a display returns.
 
-M4Capture uses KWin's window-management and screencast interfaces with PipeWire video.
+## Sources
 
-## Capture the desktop
+M4Capture adds three sources to OBS Studio, available under **Sources**:
 
-Add **Sources → + → Desktop Capture (M4Capture)**. Choose a monitor in **Display**,
-or leave **All displays** selected to capture the combined desktop. **Capture cursor**
-is on by default. This source captures video only; configure audio separately in OBS.
+- **Window Capture (M4Capture)**: Capture an application window, optionally with
+  its audio and cursor, and automatically move the capture above other sources
+  in its OBS scene or group when the window gains focus.
 
-Capture follows source visibility and reconnects automatically. If a selected
-display disconnects, the source clears its video and waits for that display to
-return. All-displays capture updates its bounds when the monitor layout changes.
-Use **Refresh display list** to update the dropdown after connecting a monitor.
+  <p align="center">
+    <img src="docs/images/window-capture-properties.png" alt="Window Capture (M4Capture) properties in OBS Studio" width="550">
+  </p>
 
-Desktop capture requires KWin's screencast interface and the XDG output protocol
-version 2+. Capturing all displays requires screencast protocol version 3+.
-
-## Choose a window
-
-Add **Sources → + → Window Capture (M4Capture)** and open Properties. The **Window** dropdown
-lists open windows by application ID and title. Selecting one fills the application
-ID. **Refresh window list** refreshes the choices. There is no portal sharing chooser.
-
-You can also enter an application ID while the application is closed. The saved
-rule waits for that application instead of depending on a particular process or
-window ID.
-
-If GPU capture is unavailable, a short CPU fallback warning appears directly
-above **Window**. It disappears when GPU capture is active or capture stops.
-
-Properties include:
-
-| Option | Behavior |
-| --- | --- |
-| Application ID | Exact application match; filled from the window dropdown or entered manually. |
-| Title filter | Optional; empty matches any title in that application. |
-| Title matching | Contains, exact, wildcard, or regular expression. |
-| Case sensitive | Off by default. |
-| Disconnect when title no longer matches | Off by default; require the captured window to keep matching the title filter. |
-| Capture cursor | On by default; include the pointer in the video. |
-| Capture application audio | Off by default; include the selected application's playback through PipeWire. |
-| Move to top when focused | Off by default; raise the source item within its current scene/group. |
-
-By default, the title filter is used to find a target. Once connected, title and
-focus changes keep the current window selected. Enable **Disconnect when title
-no longer matches** to also enforce the title filter during capture. If the title
-stops matching, another matching window can become the target. Without a matching
-target, capture becomes transparent and waits for a matching window. A newly
-opened matching window does not take over a capture whose title still matches.
-If the selected window disappears and several windows match the saved rule,
-capture waits until the rule is narrowed or a target is chosen.
-
-Closing a window or losing its stream clears the video immediately. Disconnected
-sources stay transparent and keep their last dimensions. A source with no captured
-frames yet uses a 1280×720 default. Capture starts automatically whenever a unique
-matching window is available, including after OBS startup or a window reopening.
-Stream errors retry after two seconds; normal waiting reacts to KWin window events
-without repeated capture requests. Old saved startup/reconnection switches are
-ignored and removed when the source is saved.
-
-Enable **Capture application audio** to include playback in the same OBS source.
-The source appears in the OBS audio mixer only while this option is enabled.
-The plugin matches PipeWire playback streams by the selected window's process
-(including child processes), application ID, or executable/application name when
-no ID is available. Audio can include other windows or browser tabs belonging to
-the same application; the title filter does not isolate their sound. Applications
-must play through PipeWire, directly or through its PulseAudio/ALSA/JACK support.
-Unmatched streams remain silent; the plugin never falls back to desktop audio.
-
-Playback continues through your speakers or headphones. Matching streams are
-mixed to stereo, including mono and standard surround channels. Audio follows
-source visibility and window selection, reconnects when playback streams return,
-and retries PipeWire errors independently of video. Disable overlapping OBS
-desktop audio capture to avoid recording the same sound twice. Audio/video sync
-offsets can be adjusted in OBS Advanced Audio Properties if needed.
-
-## Capture application audio without video
-
-Add **Sources → + → Application Audio Capture (M4Capture)**. Choose a window or
-enter its application ID, just as with Window Capture. The source captures only
-application playback and appears in the OBS audio mixer. It opens no video stream
-and has no cursor, video fallback, or move-to-top controls.
-
-The same title filters, saved target selection, automatic reconnection, and source
-visibility rules apply. A matching window must be open; the source waits while
-the application is closed. Title filters select the target window, while audio
-can include other windows or tabs belonging to that application. Playback stream
-changes and PipeWire errors reconnect automatically. KWin window-management access
-is required; its screencast interface is not needed for this source.
-
-Disable overlapping desktop audio or **Capture application audio** on a Window
-Capture source targeting the same application to avoid duplicate sound.
-
-## Move to top when focused
-
-Enable this per source in Properties. When its captured window gains focus:
-
-- Matching items in the current OBS scene move to the top of their immediate
-  container. Items inside nested groups move within those groups.
-- Parent groups keep their ordering relative to their siblings; they are not
-  raised as a side effect of raising a child.
-- Visibility, locking, transforms, and group membership are preserved.
-- The new ordering remains when the window loses focus.
-- A source reused in the current scene can raise each of its matching items.
-  Items in other OBS scenes are untouched.
-
-This changes the stacking order in OBS. It does not focus or raise application
-windows on the desktop.
+- **Desktop Capture (M4Capture)**: Capture one monitor or all displays together,
+  optionally with the cursor.
+- **Application Audio Capture (M4Capture)**: Capture an application's playback
+  without video.
 
 ## Requirements
 
-- Native Linux OBS Studio 32+ with its development headers, frontend API, and Qt 6 UI.
-- KDE Plasma Wayland exposing `org_kde_plasma_window_management` version 17+ and
-  `zkde_screencast_unstable_v1`.
-- PipeWire 1.2+, Wayland, libdrm and OpenGL development headers, Qt 6 Core, a C++17 compiler,
-  CMake 3.24+, Ninja, pkg-config, and `pgrep`.
+- Linux with **KDE Plasma running a Wayland session**.
+- **Native OBS Studio 32 or newer**, using Qt 6.
+- **PipeWire 1.2 or newer** for application playback and capture.
 
-The optional test build also requires Qt 6 Test, Qt 6 Widgets, and Wayland server
-development headers. The plugin itself uses Qt 6 Core.
+The installer supports native OBS. It does not install into Flatpak OBS.
+HDR capture is not supported.
 
-On Arch Linux:
+Compatibility depends on the interfaces provided by your Plasma session; see
+the [detailed compatibility requirements](docs/development-notes.md#runtime-protocol-requirements).
+
+## Install
+
+Both installation methods build M4Capture from source, so build dependencies must
+be installed first. On Arch Linux:
 
 ```sh
 sudo pacman -S --needed base-devel cmake ninja pkgconf obs-studio procps-ng qt6-base pipewire wayland libdrm libglvnd
 ```
 
-The protocol XML files are included under `protocols/`; bindings are generated
-with `wayland-scanner`. These are KDE implementation interfaces and can change
-between Plasma versions. The plugin reports when access is unavailable. It does
-not disable compositor permission checks or modify desktop security settings.
-The installer targets native OBS (`/usr/bin/obs`), not Flatpak OBS.
+For other distributions, install the equivalent
+[build dependencies](docs/development-notes.md#build-requirements).
 
-## Install and update
+Download or clone this project's source and open a terminal in its directory.
+Choose one of the methods below.
 
-Close OBS, then choose a build mode. For development with debug symbols:
+### Build and install automatically
 
-```sh
-./scripts/install.sh --debug
-```
-
-For an optimized release build:
+Close OBS, then run:
 
 ```sh
 ./scripts/install.sh --release
 ```
 
-For an optimized build with debug symbols, useful for profiling:
+Run the installer as your normal user, without sudo. Reopen OBS when it finishes.
+The three M4Capture sources will be available under **Sources**.
+
+### Build and install manually
+
+To build a folder you can copy into OBS yourself, run:
 
 ```sh
-./scripts/install.sh --relwithdebinfo
+./scripts/build.sh --release
 ```
 
-A build mode is required; running without one reports an error. Run the same
-command after source changes to update the plugin. Each mode uses a separate
-build directory: `build-debug`, `build-release`, or `build-relwithdebinfo`.
-
-Reopen OBS to load the replacement library. Native plugins are not hot-reloaded.
-The script refuses to replace the library while OBS is running and requires no sudo.
-
-The plugin is named **M4Capture**, with **Window Capture (M4Capture)**,
-**Desktop Capture (M4Capture)**, and **Application Audio Capture (M4Capture)** in
-the OBS source list. Their saved source IDs are `m4capture_source`,
-`m4capture_desktop_source`, and `m4capture_audio_source`, respectively. This is a
-fresh start without compatibility aliases or settings migration: remove any previous
-plugin installation while OBS is closed, then recreate its sources using the
-new source type.
-
-Installed files:
+OBS can stay open while building. The script creates this folder inside the
+project without installing it into OBS:
 
 ```text
-~/.config/obs-studio/plugins/m4capture/
+build-release/package/m4capture/
 ├── bin/64bit/m4capture.so
 └── data/locale/en-US.ini
 ```
 
-`XDG_CONFIG_HOME` is respected. `M4CAPTURE_PLUGIN_DIR` overrides the individual
-plugin directory; `M4CAPTURE_BUILD_DIR` overrides the chosen build directory.
-Compile without installing with:
+Close OBS, then copy or move the entire **m4capture** folder into
+`~/.config/obs-studio/plugins/`. Create the `plugins` folder if it does not exist.
+If you use `XDG_CONFIG_HOME`, use `$XDG_CONFIG_HOME/obs-studio/plugins/` instead.
+The resulting library path should be
+`~/.config/obs-studio/plugins/m4capture/bin/64bit/m4capture.so`.
 
-```sh
-cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-debug --parallel
-```
+Copy the whole folder, including `data`, rather than only the `.so` file. Reopen
+native OBS to use the sources. This folder is not a Flatpak OBS package.
 
-Launch `obs --verbose`, or `gdb --args obs --verbose`, for debugging a Debug build.
-OBS's current log contains `[M4Capture]` messages.
+### Update or remove
 
-To remove the plugin, close OBS and remove its individual plugin directory.
+To update, download or pull the newer source, close OBS, and run the same install
+command again. For manual installation, rebuild and replace the installed
+`m4capture` folder while OBS is closed. Reopen OBS to load the update.
 
-## Development checks
+To remove M4Capture, close OBS and delete its plugin folder:
+`~/.config/obs-studio/plugins/m4capture/`. If you use `XDG_CONFIG_HOME`, the folder
+is under `$XDG_CONFIG_HOME/obs-studio/plugins/m4capture/` instead. If you set a
+custom install location, remove that folder.
 
-```sh
-cmake -S . -B build -DM4CAPTURE_BUILD_TESTS=ON
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-```
+If you previously installed this project under an earlier name, remove that old
+plugin installation while OBS is closed and recreate its sources with M4Capture.
+Earlier sources and settings are not migrated automatically.
 
-Window matching, frame conversion, frame handoff, and capture-controller tests
-run without a desktop session. The controller tests use a simulated KWin Wayland
-server and an isolated PipeWire daemon with generated video; they do not link OBS
-or initialize graphics. Run these checks with:
+## Troubleshooting
 
-```sh
-env -u WAYLAND_DISPLAY -u DISPLAY ctest --test-dir build -R 'window-rule|video-frame|frame-buffer|capture-controller' --output-on-failure
-```
-
-The `obs-integration` tests exercise settings, cursor modes, rendering, and
-focus-driven ordering in real OBS scenes/groups. They use simulated capture
-servers and the running Wayland session to initialize libobs graphics.
-
-The separate `m4capture-live-tests` executable contains real KWin capture tests,
-frame-rate diagnostics, and the performance benchmark. It requires KDE Plasma
-Wayland and `M4CAPTURE_LIVE_TEST=1`; it is built with the test targets but is not
-part of the default CTest run. `m4capture-tests` always uses simulated capture
-servers, regardless of that environment variable.
-
-The live reconnection test captures only its own temporary window, closes it,
-and opens a replacement:
-
-```sh
-QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./build/m4capture-live-tests liveM4Capture
-```
-
-## Implementation
-
-- `src/kwin-connection.cpp`: window/display discovery, focus events, and KWin streams.
-- `src/window-rule.cpp`: application/title matching and stable selection.
-- `src/capture.cpp`: capture lifecycle and automatic reconnection, without OBS dependencies.
-- `src/capture-runtime.cpp`: shared KWin connection, window snapshots, and queued controller ownership.
-- `src/obs-capture.cpp`: OBS settings, persistence, logging, and focus-action callbacks.
-- `src/focus-order.cpp`: ordering items inside their existing containers.
-- `src/pipewire-capture.cpp`: mapped BGRA/RGBA frames and disconnect handling.
-- `src/pipewire-audio.cpp`: application playback discovery, capture links and stereo mixing.
-- `src/obs-dmabuf.cpp`: cached GPU buffer imports and synchronization.
-- `src/obs-video.cpp`: native CPU texture uploads and shared crop/rotation/flip drawing.
-- `src/frame-buffer.cpp`: synchronized frame handoff between capture and rendering.
-- `src/m4capture-source.cpp`: OBS properties, saved configuration, and rendering.
-
-Capture configuration and diagnostics are accessed through synchronized snapshots.
-The frame buffer has its own synchronization; controller ownership and callbacks
-stay on the Qt UI thread. Callbacks hold weak OBS references, so they do not keep
-removed sources alive.
-
-The controller tracks matching windows while its source exists and captures only
-while OBS considers it showing. Scene previews, properties previews and projectors
-count as showing even when the source is absent from the program output.
-
-| Event | Transition |
+| Problem | What to check |
 | --- | --- |
-| Startup | Track a unique target; connect when showing. |
-| Last view or preview closes | Clear video, close the capture stream and cancel capture retries; keep window tracking. |
-| A view or preview opens | Start a new stream for the current target and wait for a fresh frame. |
-| First frame | Connecting → Capturing. |
-| Stream pauses | Capturing → Paused; clear video and retain the selected window. |
-| Frames resume | Paused → Capturing without choosing another target. |
-| Target disappears, or an enforced title filter fails | Clear video and wait for a matching target. |
-| Stream failure | Failed; retry after two seconds while showing. |
-| A window or application is selected | Re-evaluate the target; start capture if showing. |
-| Application ID is cleared | Idle; clear video until a target is configured. |
-| Source is removed | Release capture and cancel retries. |
+| M4Capture is missing from the source list | Close and reopen OBS after installation. Check that you are using native OBS 32+ and installed the plugin as the same user who runs OBS. |
+| A window capture stays transparent | Open the target application, refresh the window list, and check the application ID and title filter. If several windows match, select one or narrow the filter. |
+| A desktop capture stays transparent | Check that the selected monitor is connected, then refresh the display list. |
+| Application audio is silent | Keep a matching window open and play sound through PipeWire. For Window Capture, enable **Capture application audio**. Check the source's volume and mute setting in OBS. |
+| Audio sounds doubled | Disable other OBS sources recording the same application or desktop playback. |
+| A CPU fallback warning appears | Capture can continue with higher CPU usage. Restart OBS or recreate the source to retry GPU capture. |
 
-There is no manual start/stop state or separate startup/reconnection policy.
-Cursor changes restart the stream while retaining the current window; target-rule
-edits re-evaluate selection. Unrelated settings edits leave a live stream intact.
-Old stream callbacks are ignored using an attempt generation incremented before teardown.
+Capture runs while the source is visible in OBS, including previews and
+projectors. It resumes automatically when shown again.
 
-Video prefers PipeWire DMA-BUFs supported by the OBS graphics device. KWin GPU
-buffers are imported into OBS; crop, rotation, flipping, channel handling and
-opaque-alpha handling happen on the GPU. Frames are drawn into reusable GPU
-textures before returning the capture buffers, avoiding CPU pixel copies and
-uploads while keeping buffer reuse independent of OBS rendering.
+For more detail about a problem, open the current OBS log and look for
+`[M4Capture]` messages.
 
-Explicit GPU acquire/release fences are negotiated when supported. With older
-producers using implicit synchronization, GPU reads finish before their buffers
-are returned. If GPU import is unavailable or fails, capture falls back to mapped
-shared-memory capture and native BGRA/RGBA upload. CPU capture copies only the
-cropped rows into owned memory; OBS's normal texture draw handles rotation,
-flipping and opaque alpha. This uses the same basic graphics renderer as the
-previous CPU fallback and does not require DMA-BUF import or GPU compute.
-A failed GPU capture path stays disabled for that source's lifetime, including
-reconnections; recreating the source or restarting OBS tries GPU capture again.
-HDR remains unsupported.
+## Development
 
-For diagnosis, launch OBS with `M4CAPTURE_FORCE_CPU=1` to force the CPU path.
-Logs identify `DMA-BUF GPU capture` or `CPU fallback capture`.
-
-The opt-in benchmark captures its own animated window at 1920×1080 and 3840×2160,
-with two seconds of warm-up and ten seconds of measurement per sample:
-
-```sh
-cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DM4CAPTURE_BUILD_TESTS=ON
-cmake --build build-release --target m4capture-live-tests --parallel
-python3 scripts/benchmark-capture.py --runs 3
-```
-
-The script runs `m4capture-live-tests` to compare DMA-BUF and forced CPU fallback,
-saves raw logs and JSON under `build-release/`, and reports
-median process CPU usage and prepared frame rates. The benchmark defaults to a
-60 fps OBS output clock; `M4CAPTURE_TEST_FPS_NUM` and `M4CAPTURE_TEST_FPS_DEN`
-override it. Set `M4CAPTURE_BENCHMARK_ANIMATION_MS=2` to update the captured
-window independently of the 16 ms source-draw timer and profile a faster producer.
-`--baseline /path/to/binary`
-also measures a preserved pre-change benchmark executable.
-
-`BENCHMARK_IMPORTS` in the raw logs reports imports created and destroyed during
-the measurement window. A stable DMA-BUF buffer pool should reuse its imports
-after warm-up. Imports are released on buffer removal, format changes, CPU
-fallback, or stream teardown (including hiding the source).
-
-For a short frame-rate diagnostic across an OBS output-rate change, run:
-
-```sh
-QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./build-release/m4capture-live-tests liveFrameRateProfile
-```
-
-This logs prepared frames/s at two output rates without enforcing a capture FPS
-limit. Set `M4CAPTURE_FORCE_CPU=1` to profile CPU fallback.
+See the [development notes](docs/development-notes.md) for build options, tests, benchmarks, and
+implementation details.
 
 ## License
 
