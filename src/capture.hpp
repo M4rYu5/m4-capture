@@ -1,5 +1,6 @@
 #pragma once
 
+#include "display-info.hpp"
 #include "frame-buffer.hpp"
 #include "pipewire-audio.hpp"
 #include "window-rule.hpp"
@@ -26,6 +27,10 @@ enum class PipeWireStatus;
 enum class CaptureStatus { Idle, Waiting, Connecting, Capturing, Paused, Failed };
 
 struct CaptureConfig {
+	enum class Target { Window, Desktop };
+	Target target = Target::Window;
+	// Empty selects the combined desktop; otherwise this is a stable output name.
+	QString display;
 	WindowRule rule;
 	QString preferredWindow;
 	bool cursor = true;
@@ -36,6 +41,8 @@ struct CaptureConfig {
 struct CaptureDiagnostics {
 	CaptureStatus status = CaptureStatus::Idle;
 	QString detail;
+	uint64_t generation = 0;
+	QString target;
 };
 
 class CaptureState;
@@ -76,7 +83,7 @@ class CaptureState
 	const CaptureCallbacks callbacks;
 	// Only accessed by the controller and runtime on the Qt UI thread.
 	QPointer<M4Capture> controller;
-	void setStatus(CaptureStatus status, const QString &detail);
+	void setStatus(CaptureStatus status, const QString &detail, uint64_t generation, const QString &target);
 };
 
 void initialize_capture();
@@ -84,6 +91,7 @@ void shutdown_capture();
 void queue_capture_update(const std::shared_ptr<CaptureState> &state);
 void release_capture(const std::shared_ptr<CaptureState> &state);
 QList<WindowInfo> capture_windows();
+QList<DisplayInfo> capture_displays();
 const char *capture_status_name(CaptureStatus status);
 
 // Runs on the Qt UI thread; PipeWire callbacks are queued onto this thread.
@@ -111,11 +119,14 @@ class M4Capture : public QObject
 	QTimer deadline;
 	// The selected window survives stream restarts (for example, cursor changes).
 	QString currentWindowUuid;
+	QList<DisplayInfo> desktopDisplays;
 	// Incremented before teardown so callbacks from older attempts are ignored.
 	uint64_t generation = 0;
 	bool wasFocused = false;
 	void applyConfiguration();
 	void reconcile();
+	void reconcileWindow(bool showing);
+	void reconcileDesktop(bool showing);
 	void startStream();
 	void streamReady(uint64_t attempt, uint32_t node, const QString &serial);
 	void streamFailed(uint64_t attempt, const QString &error);

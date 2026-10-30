@@ -20,7 +20,8 @@ find_package(OpenGL REQUIRED)
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 set(PROTOCOL_SOURCES)
-foreach(PROTOCOL plasma-window-management zkde-screencast-unstable-v1)
+set(CAPTURE_PROTOCOLS plasma-window-management zkde-screencast-unstable-v1 xdg-output-unstable-v1)
+foreach(PROTOCOL ${CAPTURE_PROTOCOLS})
   set(XML "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${PROTOCOL}.xml")
   set(HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/${PROTOCOL}-client-protocol.h")
   set(CODE "${CMAKE_CURRENT_BINARY_DIR}/generated/${PROTOCOL}-protocol.c")
@@ -35,6 +36,7 @@ endforeach()
 set(CAPTURE_SOURCES
   src/capture.cpp src/capture.hpp
   src/capture-runtime.cpp
+  src/display-info.hpp
   src/kwin-connection.cpp src/kwin-connection.hpp
   src/pipewire-capture.cpp src/pipewire-capture.hpp
   src/pipewire-audio.cpp src/pipewire-audio.hpp
@@ -110,7 +112,7 @@ if(M4CAPTURE_BUILD_TESTS)
   add_test(NAME video-frame COMMAND $<TARGET_FILE:video-frame-tests>)
   pkg_check_modules(WAYLAND_SERVER REQUIRED IMPORTED_TARGET wayland-server)
   set(TEST_PROTOCOL_HEADERS)
-  foreach(PROTOCOL plasma-window-management zkde-screencast-unstable-v1)
+  foreach(PROTOCOL ${CAPTURE_PROTOCOLS})
     set(HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/${PROTOCOL}-server-protocol.h")
     add_custom_command(OUTPUT "${HEADER}"
       COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"

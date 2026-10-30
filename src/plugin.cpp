@@ -9,7 +9,7 @@ MODULE_EXPORT const char *obs_module_name() { return "M4Capture"; }
 
 MODULE_EXPORT const char *obs_module_description()
 {
-	return "An OBS Studio window capture plugin for KDE Plasma Wayland with automatic reconnection.";
+	return "An OBS Studio window and desktop capture plugin for KDE Plasma Wayland with automatic reconnection.";
 }
 
 bool obs_module_load()
