@@ -147,11 +147,7 @@ static obs_properties_t *captureProperties(void *opaque, CaptureMode mode)
 		config = state->configuration();
 		cpuFallback = state->frames->mode() == FrameBuffer::Mode::Cpu;
 	}
-	if (mode == CaptureMode::ApplicationAudio) {
-		auto help = obs_properties_add_text(props, "audio_help", obs_module_text("Source.AudioOnly.Help"),
-						    OBS_TEXT_INFO);
-		obs_property_text_set_info_word_wrap(help, true);
-	} else {
+	if (mode != CaptureMode::ApplicationAudio) {
 		auto warning = obs_properties_add_text(props, "cpu_fallback", obs_module_text("Source.CpuFallback"),
 						       OBS_TEXT_INFO);
 		obs_property_text_set_info_type(warning, OBS_TEXT_INFO_WARNING);
