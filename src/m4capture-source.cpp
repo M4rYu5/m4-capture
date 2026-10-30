@@ -118,6 +118,11 @@ static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, o
 	auto uuid = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
 	if (state->configuration().preferredWindow == uuid)
 		return false;
+	if (uuid.isEmpty()) {
+		obs_data_set_string(settings, "app_id", "");
+		obs_data_set_string(settings, "title_filter", "");
+		return true;
+	}
 	for (const auto &window : capture_windows())
 		if (window.uuid == uuid) {
 			auto rule = read_capture_config(settings).rule;
@@ -147,11 +152,7 @@ static obs_properties_t *captureProperties(void *opaque, CaptureMode mode)
 		config = state->configuration();
 		cpuFallback = state->frames->mode() == FrameBuffer::Mode::Cpu;
 	}
-	if (mode == CaptureMode::ApplicationAudio) {
-		auto help = obs_properties_add_text(props, "audio_help", obs_module_text("Source.AudioOnly.Help"),
-						    OBS_TEXT_INFO);
-		obs_property_text_set_info_word_wrap(help, true);
-	} else {
+	if (mode != CaptureMode::ApplicationAudio) {
 		auto warning = obs_properties_add_text(props, "cpu_fallback", obs_module_text("Source.CpuFallback"),
 						       OBS_TEXT_INFO);
 		obs_property_text_set_info_type(warning, OBS_TEXT_INFO_WARNING);

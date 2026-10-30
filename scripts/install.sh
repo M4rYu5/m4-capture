@@ -56,8 +56,7 @@ require_obs_closed() {
 }
 
 require_obs_closed
-cmake -S "$project_dir" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE="$build_type"
-cmake --build "$build_dir" --parallel
+"$project_dir/scripts/build.sh" "$1"
 require_obs_closed
 cmake --install "$build_dir" --prefix "$plugin_dir"
 printf '\nInstalled M4Capture (%s) to %s\n' "$build_type" "$plugin_dir"
