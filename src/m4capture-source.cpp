@@ -110,14 +110,13 @@ static bool refreshClicked(obs_properties_t *, obs_property_t *, void *data)
 	return false;
 }
 
-static bool windowSelected(void *opaque, obs_properties_t *, obs_property_t *, obs_data_t *settings)
+static bool windowSelected(obs_properties_t *props, obs_property_t *, obs_data_t *settings)
 {
-	if (!opaque)
-		return false;
-	auto state = static_cast<M4CaptureSource *>(opaque)->state;
+	auto &previous = *static_cast<QString *>(obs_properties_get_param(props));
 	auto uuid = QString::fromUtf8(obs_data_get_string(settings, "selected_window"));
-	if (state->configuration().preferredWindow == uuid)
+	if (previous == uuid)
 		return false;
+	previous = uuid;
 	if (uuid.isEmpty()) {
 		obs_data_set_string(settings, "app_id", "");
 		obs_data_set_string(settings, "title_filter", "");
@@ -161,6 +160,10 @@ static obs_properties_t *captureProperties(void *opaque, CaptureMode mode)
 	}
 	if (mode == CaptureMode::Desktop)
 		return props;
+	// Audio-source updates can run before the modified callback, so track the
+	// picker's previous selection independently of the capture configuration.
+	obs_properties_set_param(props, new QString(config.preferredWindow),
+				 [](void *data) { delete static_cast<QString *>(data); });
 	auto picker = obs_properties_add_list(props, "selected_window", obs_module_text("Source.Window"),
 					      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	setHelpDescription(picker, "Source.Window.Help");
@@ -176,7 +179,7 @@ static obs_properties_t *captureProperties(void *opaque, CaptureMode mode)
 		    QStringLiteral("%1: %2").arg(obs_module_text("Source.SavedTarget"), config.rule.appId).toUtf8();
 		obs_property_list_add_string(picker, label.constData(), config.preferredWindow.toUtf8().constData());
 	}
-	obs_property_set_modified_callback2(picker, windowSelected, opaque);
+	obs_property_set_modified_callback(picker, windowSelected);
 	obs_properties_add_button2(props, "refresh_windows", obs_module_text("Source.Refresh"), refreshClicked, opaque);
 	obs_properties_add_text(props, "app_id", obs_module_text("Source.Application"), OBS_TEXT_DEFAULT);
 	obs_properties_add_text(props, "title_filter", obs_module_text("Source.Title"), OBS_TEXT_DEFAULT);
