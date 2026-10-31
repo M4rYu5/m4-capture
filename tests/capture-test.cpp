@@ -210,6 +210,8 @@ class CaptureTest : public ObsTestFixture
 		auto picker = obs_properties_get(props, "selected_window");
 		QVERIFY(picker);
 		obs_data_set_string(settings, "selected_window", "audio-pick");
+		// OBS applies audio-source settings before invoking the property's callback.
+		obs_source_update(target, settings);
 		QVERIFY(obs_property_modified(picker, settings));
 		QCOMPARE(QString(obs_data_get_string(settings, "app_id")), QString("test.app"));
 		obs_data_set_string(settings, "title_filter", "Audio");
@@ -479,6 +481,7 @@ class CaptureTest : public ObsTestFixture
 		auto picker = obs_properties_get(props, "selected_window");
 		QVERIFY(picker);
 		obs_data_set_string(settings, "selected_window", "chosen");
+		obs_source_update(target, settings);
 		QVERIFY(obs_property_modified(picker, settings));
 		obs_source_update(target, settings);
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
@@ -487,6 +490,7 @@ class CaptureTest : public ObsTestFixture
 			QTRY_COMPARE(renderedPixel(target).alpha(), 255);
 
 		obs_data_set_string(settings, "selected_window", "");
+		obs_source_update(target, settings);
 		QVERIFY(obs_property_modified(picker, settings));
 		QCOMPARE(QString(obs_data_get_string(settings, "app_id")), QString());
 		QCOMPARE(QString(obs_data_get_string(settings, "title_filter")), QString());
