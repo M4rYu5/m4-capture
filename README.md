@@ -2,6 +2,9 @@
 
 Capture windows, your desktop, and application audio in OBS Studio on KDE Plasma Wayland. M4Capture remembers your target and reconnects automatically when a window reopens or a display returns.
 
+> [!NOTE]
+> **AI disclosure:** This plugin was developed with AI assistance.
+
 ## Sources
 
 M4Capture adds three sources to OBS Studio, available under **Sources**:
