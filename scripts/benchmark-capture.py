@@ -9,11 +9,16 @@ import re
 import statistics
 import subprocess
 
+project_dir = Path(__file__).resolve().parent.parent
+project_version = re.search(r"project\(M4Capture VERSION (\S+)",
+                            (project_dir / "CMakeLists.txt").read_text())[1]
+build_dir = project_dir / "out" / f"build-release-v{project_version}"
+
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--binary", type=Path, default=Path("build-release/m4capture-live-tests"))
+parser.add_argument("--binary", type=Path, default=build_dir / "m4capture-live-tests")
 parser.add_argument("--baseline", type=Path, help="Preserved pre-change benchmark executable")
 parser.add_argument("--runs", type=int, default=3)
-parser.add_argument("--output", type=Path, default=Path("build-release/capture-performance.json"))
+parser.add_argument("--output", type=Path, default=build_dir / "capture-performance.json")
 args = parser.parse_args()
 if args.runs < 1:
     parser.error("--runs must be positive")

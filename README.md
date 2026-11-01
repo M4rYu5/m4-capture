@@ -83,7 +83,7 @@ To build a folder you can copy into OBS yourself, run:
 ./scripts/build.sh --release
 ```
 
-The script creates `build-release/package/m4capture/`. Close OBS, then copy that folder into your [OBS plugin directory](#obs-plugin-location). Reopen OBS to load the plugin.
+The script creates `out/build-release-v<version>/package/m4capture/`. Close OBS, then copy that folder into your [OBS plugin directory](#obs-plugin-location). Reopen OBS to load the plugin.
 
 ### Update or remove
 

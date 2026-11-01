@@ -12,12 +12,12 @@ Usage: ./scripts/build.sh <--debug|--release|--relwithdebinfo>
   --relwithdebinfo   Optimized build with debug symbols, useful for profiling.
   --help            Show this help.
 
-Builds a ready-to-copy m4capture folder in build-<mode>/package/.
+Builds a ready-to-copy m4capture folder in out/build-<mode>-v<version>/package/.
 OBS can stay open while building. Close it before copying the folder into
 your native OBS plugins directory. No sudo is needed.
 
 Optional environment variable:
-  M4CAPTURE_BUILD_DIR  Build directory (default: project/build-<mode>)
+  M4CAPTURE_BUILD_DIR  Build directory (default: project/out/build-<mode>-v<version>)
 EOF
 }
 
@@ -42,7 +42,8 @@ case "$1" in
         ;;
 esac
 
-build_dir="${M4CAPTURE_BUILD_DIR:-$project_dir/build-${1#--}}"
+project_version="$(sed -nE 's/^project\(M4Capture VERSION ([^ ]+) .*/\1/p' "$project_dir/CMakeLists.txt")"
+build_dir="${M4CAPTURE_BUILD_DIR:-$project_dir/out/build-${1#--}-v$project_version}"
 
 cmake -S "$project_dir" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE="$build_type"
 cmake --build "$build_dir" --target m4capture --parallel

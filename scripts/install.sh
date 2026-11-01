@@ -18,7 +18,7 @@ Close OBS before installing, then reopen it to load the new library.
 No sudo is needed. Flatpak OBS is not supported by this script.
 
 Optional environment variables:
-  M4CAPTURE_BUILD_DIR   Build directory (default: project/build-<mode>)
+  M4CAPTURE_BUILD_DIR   Build directory (default: project/out/build-<mode>-v<version>)
   M4CAPTURE_PLUGIN_DIR  Individual plugin install directory
                        (default: $XDG_CONFIG_HOME/obs-studio/plugins/m4capture,
                         falling back to ~/.config/obs-studio/plugins/m4capture)
@@ -46,7 +46,8 @@ case "$1" in
         ;;
 esac
 
-build_dir="${M4CAPTURE_BUILD_DIR:-$project_dir/build-${1#--}}"
+project_version="$(sed -nE 's/^project\(M4Capture VERSION ([^ ]+) .*/\1/p' "$project_dir/CMakeLists.txt")"
+build_dir="${M4CAPTURE_BUILD_DIR:-$project_dir/out/build-${1#--}-v$project_version}"
 
 require_obs_closed() {
     if pgrep -u "$(id -u)" -x obs >/dev/null; then

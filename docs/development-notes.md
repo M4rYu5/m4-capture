@@ -41,8 +41,9 @@ A build mode is required. Run the same command after source changes to update
 the installation, then reopen OBS. The installer requires no sudo and targets
 native OBS, not Flatpak OBS.
 
-Each mode uses a separate build directory: `build-debug`, `build-release`, or
-`build-relwithdebinfo`. `M4CAPTURE_BUILD_DIR` overrides this directory.
+Each mode uses a separate build directory: `out/build-debug-v0.3.1`, `out/build-release-v0.3.1`, or
+`out/build-relwithdebinfo-v0.3.1`. The scripts read the version from `CMakeLists.txt`.
+`M4CAPTURE_BUILD_DIR` overrides this directory; keep custom paths under `out/`.
 `M4CAPTURE_PLUGIN_DIR` overrides the individual plugin install directory, which
 defaults to `${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins/m4capture`.
 
@@ -62,8 +63,8 @@ m4capture/
 Compile without installing with:
 
 ```sh
-cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-debug --parallel
+cmake -S . -B out/build-debug-v0.3.1 -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build out/build-debug-v0.3.1 --parallel
 ```
 
 Launch `obs --verbose`, or `gdb --args obs --verbose`, for debugging a Debug build.
@@ -77,9 +78,9 @@ and removed when the source is saved.
 ## Development checks
 
 ```sh
-cmake -S . -B build -DM4CAPTURE_BUILD_TESTS=ON
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+cmake -S . -B out/build-debug-v0.3.1 -DM4CAPTURE_BUILD_TESTS=ON
+cmake --build out/build-debug-v0.3.1 --parallel
+ctest --test-dir out/build-debug-v0.3.1 --output-on-failure
 ```
 
 Window matching, frame conversion, frame handoff, and capture-controller tests
@@ -88,7 +89,7 @@ server and an isolated PipeWire daemon with generated video; they do not link OB
 or initialize graphics. Run these checks with:
 
 ```sh
-env -u WAYLAND_DISPLAY -u DISPLAY ctest --test-dir build -R 'window-rule|video-frame|frame-buffer|capture-controller' --output-on-failure
+env -u WAYLAND_DISPLAY -u DISPLAY ctest --test-dir out/build-debug-v0.3.1 -R 'window-rule|video-frame|frame-buffer|capture-controller' --output-on-failure
 ```
 
 The `obs-integration` tests exercise settings, cursor modes, rendering, and
@@ -105,7 +106,7 @@ The live reconnection test captures only its own temporary window, closes it,
 and opens a replacement:
 
 ```sh
-QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./build/m4capture-live-tests liveM4Capture
+QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./out/build-debug-v0.3.1/m4capture-live-tests liveM4Capture
 ```
 
 ## Implementation
@@ -175,13 +176,13 @@ The opt-in benchmark captures its own animated window at 1920×1080 and 3840×21
 with two seconds of warm-up and ten seconds of measurement per sample:
 
 ```sh
-cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DM4CAPTURE_BUILD_TESTS=ON
-cmake --build build-release --target m4capture-live-tests --parallel
+cmake -S . -B out/build-release-v0.3.1 -DCMAKE_BUILD_TYPE=Release -DM4CAPTURE_BUILD_TESTS=ON
+cmake --build out/build-release-v0.3.1 --target m4capture-live-tests --parallel
 python3 scripts/benchmark-capture.py --runs 3
 ```
 
 The script runs `m4capture-live-tests` to compare DMA-BUF and forced CPU fallback,
-saves raw logs and JSON under `build-release/`, and reports
+saves raw logs and JSON under `out/build-release-v0.3.1/`, and reports
 median process CPU usage and prepared frame rates. The benchmark defaults to a
 60 fps OBS output clock; `M4CAPTURE_TEST_FPS_NUM` and `M4CAPTURE_TEST_FPS_DEN`
 override it. Set `M4CAPTURE_BENCHMARK_ANIMATION_MS=2` to update the captured
@@ -197,7 +198,7 @@ fallback, or stream teardown (including hiding the source).
 For a short frame-rate diagnostic across an OBS output-rate change, run:
 
 ```sh
-QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./build-release/m4capture-live-tests liveFrameRateProfile
+QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./out/build-release-v0.3.1/m4capture-live-tests liveFrameRateProfile
 ```
 
 This logs prepared frames/s at two output rates without enforcing a capture FPS
