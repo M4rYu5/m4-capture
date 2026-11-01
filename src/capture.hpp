@@ -34,6 +34,7 @@ struct CaptureConfig {
 	WindowRule rule;
 	QString preferredWindow;
 	bool cursor = true;
+	bool followFocus = false;
 	bool raiseOnFocus = false;
 	bool audio = false;
 };

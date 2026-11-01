@@ -16,6 +16,8 @@ bool requiresTargetSelection(const CaptureConfig &a, const CaptureConfig &b)
 
 CaptureConfig normalize_capture_config(CaptureConfig config, CaptureMode mode)
 {
+	if (mode != CaptureMode::Window)
+		config.followFocus = false;
 	if (mode == CaptureMode::ApplicationAudio) {
 		config.audio = true;
 		config.cursor = false;
@@ -157,7 +159,7 @@ void M4Capture::applyConfiguration()
 	} else if (selectTarget) {
 		bool ambiguous;
 		const auto windows = backend ? backend->windows() : QList<WindowInfo>{};
-		auto match = select_window(windows, next.rule, {}, next.preferredWindow, &ambiguous);
+		auto match = select_window(windows, next.rule, {}, next.preferredWindow, &ambiguous, next.followFocus);
 		restart |= match != currentWindowUuid || !next.rule.error().isEmpty();
 	}
 	if (!config.raiseOnFocus && next.raiseOnFocus)
@@ -277,7 +279,8 @@ void M4Capture::reconcileWindow(bool showing)
 	}
 	const auto windows = backend->windows();
 	bool ambiguous;
-	auto match = select_window(windows, config.rule, currentWindowUuid, config.preferredWindow, &ambiguous);
+	auto match = select_window(windows, config.rule, currentWindowUuid, config.preferredWindow, &ambiguous,
+				   config.followFocus);
 	if (stream && match != currentWindowUuid)
 		stopStream();
 	if (match.isEmpty()) {
@@ -290,6 +293,8 @@ void M4Capture::reconcileWindow(bool showing)
 		return;
 	}
 	if (currentWindowUuid != match) {
+		// A new target must not inherit the previous window's retry delay.
+		retry.stop();
 		currentWindowUuid = match;
 		wasFocused = false;
 	}

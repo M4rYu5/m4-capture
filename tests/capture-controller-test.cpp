@@ -276,14 +276,17 @@ class CaptureControllerTest : public QObject
 		const bool audioOnly = mode == CaptureMode::ApplicationAudio;
 		QCOMPARE(state.configuration().audio, audioOnly);
 		QCOMPARE(state.configuration().cursor, !audioOnly);
+		QVERIFY(!state.configuration().followFocus);
 		CaptureConfig config;
 		config.rule.appId = "test.app";
 		config.raiseOnFocus = true;
+		config.followFocus = true;
 		state.configure(config);
 		auto normalized = state.configuration();
 		QCOMPARE(normalized.audio, audioOnly);
 		QCOMPARE(normalized.cursor, !audioOnly);
 		QCOMPARE(normalized.raiseOnFocus, mode == CaptureMode::Window);
+		QCOMPARE(normalized.followFocus, mode == CaptureMode::Window);
 		QCOMPARE(normalized.rule.appId, mode == CaptureMode::Desktop ? QString{} : config.rule.appId);
 	}
 
@@ -344,6 +347,96 @@ class CaptureControllerTest : public QObject
 			QVERIFY(gpu->removed.load() > removed);
 			QVERIFY(gpu->cleared.load() > cleared);
 		}
+	}
+
+	void followsFocusedMatchingWindow_data()
+	{
+		QTest::addColumn<bool>("disconnect");
+		QTest::newRow("continuous-title-matching") << true;
+		QTest::newRow("keep-changed-title") << false;
+	}
+
+	void followsFocusedMatchingWindow()
+	{
+		QFETCH(bool, disconnect);
+		kwin.deferCapture = true;
+		kwin.add({"first", "test.app", "Editor one", false});
+		kwin.add({"second", "test.app", "Editor two", true});
+		kwin.add({"wrong-title", "test.app", "Settings", false});
+		kwin.add({"wrong-app", "other.app", "Editor three", false});
+		QTRY_COMPARE(capture_windows().size(), 4);
+		CaptureConfig config;
+		config.rule = {"test.app", "Editor"};
+		config.rule.disconnectOnTitleMismatch = disconnect;
+		config.preferredWindow = "first";
+		auto target = capture(config);
+		QTRY_COMPARE(status(target), QString("connecting"));
+		QTRY_COMPARE(kwin.requestedWindow, QString("first"));
+		int requests = kwin.captureRequests;
+		config.followFocus = true;
+		target->configure(config);
+		queue_capture_update(target);
+		++requests;
+		QTRY_COMPARE(kwin.captureRequests, requests);
+		QCOMPARE(kwin.requestedWindow, QString("second"));
+		for (const char *uuid : {"wrong-title", "wrong-app", "second"}) {
+			kwin.focus(uuid);
+			QTest::qWait(60);
+			QCOMPARE(kwin.captureRequests, requests);
+			QCOMPARE(kwin.requestedWindow, QString("second"));
+		}
+		kwin.focus("first");
+		++requests;
+		QTRY_COMPARE(kwin.captureRequests, requests);
+		QCOMPARE(kwin.requestedWindow, QString("first"));
+		// Switching follows focus without changing the saved picker preference.
+		QCOMPARE(target->configuration().preferredWindow, QString("first"));
+		kwin.focus("second");
+		++requests;
+		QTRY_COMPARE(kwin.captureRequests, requests);
+		QCOMPARE(kwin.requestedWindow, QString("second"));
+		config.followFocus = false;
+		target->configure(config);
+		queue_capture_update(target);
+		kwin.focus("first");
+		QTest::qWait(100);
+		QCOMPARE(kwin.captureRequests, requests);
+		QCOMPARE(kwin.requestedWindow, QString("second"));
+	}
+
+	void focusResolvesAmbiguousSelection()
+	{
+		kwin.deferCapture = true;
+		kwin.add({"first", "test.app", "Editor one", false});
+		kwin.add({"second", "test.app", "Editor two", false});
+		QTRY_COMPARE(capture_windows().size(), 2);
+		CaptureConfig config;
+		config.followFocus = true;
+		auto target = capture(config);
+		QTRY_COMPARE(status(target), QString("waiting"));
+		int requests = kwin.captureRequests;
+		kwin.focus("second");
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(kwin.requestedWindow, QString("second"));
+		kwin.remove("second");
+		QTRY_COMPARE(kwin.captureRequests, requests + 2);
+		QCOMPARE(kwin.requestedWindow, QString("first"));
+	}
+
+	void focusedTargetDoesNotInheritRetryDelay()
+	{
+		kwin.add({"first", "test.app", "Editor one", true});
+		kwin.add({"second", "test.app", "Editor two", false});
+		CaptureConfig config;
+		config.followFocus = true;
+		auto target = capture(config);
+		QTRY_COMPARE(status(target), QString("failed"));
+		int requests = kwin.captureRequests;
+		kwin.deferCapture = true;
+		kwin.focus("second");
+		QTRY_COMPARE_WITH_TIMEOUT(kwin.captureRequests, requests + 1, 1000);
+		QCOMPARE(kwin.requestedWindow, QString("second"));
+		QCOMPARE(status(target), QString("connecting"));
 	}
 
 	void failedCaptureRetriesWithDelay()

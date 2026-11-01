@@ -190,6 +190,10 @@ static obs_properties_t *captureProperties(void *opaque, CaptureMode mode)
 	obs_property_list_add_int(match, obs_module_text("Match.Wildcard"), int(TitleMatch::Wildcard));
 	obs_property_list_add_int(match, obs_module_text("Match.Regex"), int(TitleMatch::Regex));
 	obs_properties_add_bool(props, "case_sensitive", obs_module_text("Source.CaseSensitive"));
+	if (mode == CaptureMode::Window) {
+		auto follow = obs_properties_add_bool(props, "follow_focus", obs_module_text("Source.FollowFocus"));
+		setHelpDescription(follow, "Source.FollowFocus.Help");
+	}
 	auto disconnect = obs_properties_add_bool(props, "disconnect_on_title_mismatch",
 						  obs_module_text("Source.DisconnectOnTitleMismatch"));
 	setHelpDescription(disconnect, "Source.DisconnectOnTitleMismatch.Help");

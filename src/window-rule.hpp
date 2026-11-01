@@ -36,5 +36,6 @@ struct WindowRule {
 };
 
 // Keep a live selection through title changes unless continuous title matching is enabled.
+// Following focus gives a fully matching active window priority over that selection.
 QString select_window(const QList<WindowInfo> &windows, const WindowRule &rule, const QString &current,
-		      const QString &preferred, bool *ambiguous);
+		      const QString &preferred, bool *ambiguous, bool followFocus = false);

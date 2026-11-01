@@ -57,9 +57,13 @@ QString WindowRule::error() const
 }
 
 QString select_window(const QList<WindowInfo> &windows, const WindowRule &rule, const QString &current,
-		      const QString &preferred, bool *ambiguous)
+		      const QString &preferred, bool *ambiguous, bool followFocus)
 {
 	*ambiguous = false;
+	if (followFocus)
+		for (const auto &window : windows)
+			if (window.active && rule.matches(window))
+				return window.uuid;
 	QStringList matches;
 	for (const auto &window : windows) {
 		if (!current.isEmpty() && window.uuid == current && window.appId == rule.appId &&

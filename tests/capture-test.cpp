@@ -108,6 +108,7 @@ class CaptureTest : public ObsTestFixture
 		QVERIFY(!obs_properties_get(props, "selected_window"));
 		QVERIFY(!obs_properties_get(props, "app_id"));
 		QVERIFY(!obs_properties_get(props, "raise_on_focus"));
+		QVERIFY(!obs_properties_get(props, "follow_focus"));
 		obs_properties_destroy(props);
 		OBSDataAutoRelease updated = obs_source_get_settings(target);
 		obs_data_set_string(updated, "selected_display", "DP-2");
@@ -152,6 +153,8 @@ class CaptureTest : public ObsTestFixture
 		QVERIFY(obs_data_get_bool(settings, "disconnect_on_title_mismatch"));
 		QVERIFY(obs_properties_get(props, "capture_audio"));
 		QVERIFY(!obs_data_get_bool(settings, "capture_audio"));
+		QVERIFY(obs_properties_get(props, "follow_focus"));
+		QVERIFY(!obs_data_get_bool(settings, "follow_focus"));
 		QVERIFY(obs_source_get_output_flags(target) & OBS_SOURCE_AUDIO);
 		obs_data_set_string(settings, "selected_window", "pick");
 		QVERIFY(obs_property_modified(picker, settings));
@@ -160,6 +163,7 @@ class CaptureTest : public ObsTestFixture
 		obs_data_set_bool(settings, "capture_cursor", false);
 		obs_data_set_bool(settings, "capture_audio", true);
 		obs_data_set_bool(settings, "disconnect_on_title_mismatch", false);
+		obs_data_set_bool(settings, "follow_focus", true);
 		obs_source_update(target, settings);
 		obs_properties_destroy(props);
 		QTest::qWait(80);
@@ -173,6 +177,7 @@ class CaptureTest : public ObsTestFixture
 		QVERIFY(!obs_data_get_bool(config, "capture_cursor"));
 		QVERIFY(obs_data_get_bool(config, "capture_audio"));
 		QVERIFY(!obs_data_get_bool(config, "disconnect_on_title_mismatch"));
+		QVERIFY(obs_data_get_bool(config, "follow_focus"));
 		// Reload the serialized source, including its renamed type and saved settings.
 		OBSDataAutoRelease serialized = obs_data_create_from_json(obs_data_get_json(saved));
 		obs_data_set_string(serialized, "name", "Restored settings");
@@ -187,6 +192,7 @@ class CaptureTest : public ObsTestFixture
 		QVERIFY(!obs_data_get_bool(restoredSettings, "capture_cursor"));
 		QVERIFY(obs_data_get_bool(restoredSettings, "capture_audio"));
 		QVERIFY(!obs_data_get_bool(restoredSettings, "disconnect_on_title_mismatch"));
+		QVERIFY(obs_data_get_bool(restoredSettings, "follow_focus"));
 	}
 
 	void audioOnlySettingsAndPickerRoundTrip()
@@ -205,6 +211,7 @@ class CaptureTest : public ObsTestFixture
 		auto destroyProps = qScopeGuard([&] { obs_properties_destroy(props); });
 		QVERIFY(!obs_properties_get(props, "capture_audio"));
 		QVERIFY(!obs_properties_get(props, "capture_cursor"));
+		QVERIFY(!obs_properties_get(props, "follow_focus"));
 		QVERIFY(!obs_properties_get(props, "raise_on_focus"));
 		QVERIFY(!obs_properties_get(props, "cpu_fallback"));
 		auto picker = obs_properties_get(props, "selected_window");
@@ -220,6 +227,7 @@ class CaptureTest : public ObsTestFixture
 		// Hidden video/audio switches cannot change this source's purpose.
 		obs_data_set_bool(settings, "capture_audio", false);
 		obs_data_set_bool(settings, "capture_cursor", true);
+		obs_data_set_bool(settings, "follow_focus", true);
 		obs_data_set_bool(settings, "raise_on_focus", true);
 		obs_source_update(target, settings);
 		QVERIFY(obs_source_audio_active(target));
@@ -229,6 +237,7 @@ class CaptureTest : public ObsTestFixture
 		QVERIFY(obs_data_get_bool(config, "capture_audio"));
 		QVERIFY(!obs_data_get_bool(config, "capture_cursor"));
 		QVERIFY(!obs_data_get_bool(config, "raise_on_focus"));
+		QVERIFY(!obs_data_get_bool(config, "follow_focus"));
 		OBSDataAutoRelease serialized = obs_data_create_from_json(obs_data_get_json(saved));
 		obs_data_set_string(serialized, "name", "Restored audio only");
 		OBSSourceAutoRelease restored = obs_load_source(serialized);
@@ -603,6 +612,40 @@ class CaptureTest : public ObsTestFixture
 		kwin.focus("focused");
 		QTRY_COMPARE(obs_sceneitem_get_order_position(grouped), 2);
 		QVERIFY(obs_sceneitem_get_order_position(sibling) < 2);
+	}
+
+	void focusSwitchesLiveCaptureAndRaisesSource()
+	{
+		TestVideo video;
+		QVERIFY(video.startCapture(kwin));
+		QWidget window;
+		mainWindow = &window;
+		OBSSceneAutoRelease scene = obs_scene_create("Follow focus scene");
+		currentScene = obs_scene_get_source(scene);
+		kwin.add({"first", "test.app", "Editor one", true});
+		kwin.add({"second", "test.app", "Editor two", false});
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "app_id", "test.app");
+		obs_data_set_string(settings, "selected_window", "first");
+		obs_data_set_bool(settings, "follow_focus", true);
+		obs_data_set_bool(settings, "raise_on_focus", true);
+		OBSSourceAutoRelease target = createSource("Follow focus", settings);
+		OBSSourceAutoRelease filler = source("Filler", "");
+		auto item = obs_scene_add(scene, target);
+		obs_scene_add(scene, filler);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QTRY_COMPARE(renderedPixel(target).alpha(), 255);
+		int requests = kwin.captureRequests;
+		obs_sceneitem_set_order_position(item, 0);
+		kwin.focus("second");
+		QTRY_COMPARE(kwin.captureRequests, requests + 1);
+		QCOMPARE(kwin.requestedWindow, QString("second"));
+		QTRY_COMPARE(obs_sceneitem_get_order_position(item), 1);
+		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
+		QTRY_COMPARE(renderedPixel(target).alpha(), 255);
+		OBSDataAutoRelease saved = obs_save_source(target);
+		OBSDataAutoRelease config = obs_data_get_obj(saved, "settings");
+		QCOMPARE(QString(obs_data_get_string(config, "selected_window")), QString("first"));
 	}
 
 	void focusOptionDefaultsOff()

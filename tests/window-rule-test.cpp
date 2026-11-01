@@ -6,6 +6,34 @@ class WindowRuleTest : public QObject
 {
 	Q_OBJECT
       private slots:
+	void focusedSelectionRequiresFullMatch()
+	{
+		WindowRule rule{"test.app", "Editor"};
+		rule.disconnectOnTitleMismatch = false;
+		WindowInfo current{"current", "test.app", "Changed title", false};
+		WindowInfo focused{"focused", "test.app", "Editor", true};
+		bool ambiguous;
+		QCOMPARE(select_window({current, focused}, rule, "current", "current", &ambiguous), QString("current"));
+		QCOMPARE(select_window({current, focused}, rule, "current", "current", &ambiguous, true),
+			 QString("focused"));
+		QVERIFY(!ambiguous);
+		QCOMPARE(select_window({current, focused}, rule, {}, "current", &ambiguous, true), QString("focused"));
+		focused.appId = "other.app";
+		QCOMPARE(select_window({current, focused}, rule, "current", {}, &ambiguous, true), QString("current"));
+		focused.appId = "test.app";
+		focused.title = "Other";
+		QCOMPARE(select_window({current, focused}, rule, "current", {}, &ambiguous, true), QString("current"));
+		focused.title = "editor";
+		rule.mode = TitleMatch::Exact;
+		rule.caseSensitive = true;
+		QCOMPARE(select_window({current, focused}, rule, "current", {}, &ambiguous, true), QString("current"));
+		rule.caseSensitive = false;
+		QCOMPARE(select_window({current, focused}, rule, "current", {}, &ambiguous, true), QString("focused"));
+		rule.mode = TitleMatch::Regex;
+		rule.title = "[";
+		QCOMPARE(select_window({focused}, rule, {}, {}, &ambiguous, true), QString());
+	}
+
 	void updatedRulesUseCurrentSettings()
 	{
 		WindowRule rule{"old.app", "^editor$"};
