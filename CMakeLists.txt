@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(M4Capture VERSION 0.3.0 LANGUAGES C CXX)
+project(M4Capture VERSION 0.3.1 LANGUAGES C CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "M4Capture currently targets Linux.")
