@@ -14,6 +14,14 @@ extern "C" obs_source_t *obs_frontend_get_current_scene() { return obs_source_ge
 extern "C" void obs_frontend_save() { ++saves; }
 extern "C" const char *obs_module_text(const char *text) { return text; }
 
+void drain_obs_test_tasks()
+{
+	QCoreApplication::sendPostedEvents();
+	while (obs_wait_for_destroy_queue())
+		QCoreApplication::sendPostedEvents();
+	QCoreApplication::sendPostedEvents();
+}
+
 ObsAudioRecorder::ObsAudioRecorder(obs_source_t *source) : source(source)
 {
 	obs_source_add_audio_capture_callback(source, receive, this);
@@ -142,4 +150,5 @@ void ObsTestFixture::cleanupObs()
 	for (const auto &source : scenes)
 		obs_canvas_scene_remove(obs_group_or_scene_from_source(source));
 	scenes.clear();
+	drain_obs_test_tasks();
 }

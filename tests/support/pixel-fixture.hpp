@@ -3,10 +3,12 @@
 #include "video-frame.hpp"
 
 #include <QByteArray>
+#include <algorithm>
 #include <spa/buffer/meta.h>
 
 struct PixelFixture {
 	std::vector<uint8_t> bytes;
+	std::vector<uint8_t> rowStorage;
 	spa_video_info_raw format{};
 	spa_chunk chunk{};
 	spa_data plane{};
@@ -36,6 +38,24 @@ struct PixelFixture {
 		buffer.datas = &plane;
 		buffer.n_metas = 2;
 		buffer.metas = metadata;
+	}
+	PixelFixture(const PixelFixture &) = delete;
+	PixelFixture &operator=(const PixelFixture &) = delete;
+
+	std::vector<uint8_t> &paddedRows(uint32_t rowPadding, uint32_t byteOffset, bool bottomUp = false)
+	{
+		const uint32_t rowBytes = format.size.width * 4;
+		const uint32_t stride = rowBytes + rowPadding;
+		rowStorage.assign(byteOffset + size_t(stride) * format.size.height, 0);
+		for (uint32_t row = 0; row < format.size.height; ++row)
+			std::copy_n(bytes.data() + row * rowBytes, rowBytes,
+				    rowStorage.data() + byteOffset + row * stride);
+		plane.data = rowStorage.data();
+		plane.maxsize = rowStorage.size();
+		chunk.offset = byteOffset + (bottomUp ? (format.size.height - 1) * stride : 0);
+		chunk.stride = bottomUp ? -int32_t(stride) : int32_t(stride);
+		chunk.size = (format.size.height - 1) * stride + rowBytes;
+		return rowStorage;
 	}
 };
 

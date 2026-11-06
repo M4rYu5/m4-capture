@@ -1,7 +1,7 @@
 #include "dmabuf-fixture.hpp"
+#include "live-obs-fixture.hpp"
 #include "obs-dmabuf.hpp"
 #include "obs-graphics.hpp"
-#include "obs-test-fixture.hpp"
 
 #include <QElapsedTimer>
 #include <QPainter>
@@ -9,50 +9,10 @@
 #include <algorithm>
 #include <ctime>
 
-class LiveCaptureTest : public ObsTestFixture
+class LiveCaptureTest : public LiveObsFixture
 {
 	Q_OBJECT
-
-	int64_t frameCount(obs_source_t *source)
-	{
-		calldata_t params{};
-		proc_handler_call(obs_source_get_proc_handler(source), "get_status", &params);
-		auto result = calldata_int(&params, "frames");
-		calldata_free(&params);
-		return result;
-	}
-	int64_t captureGeneration(obs_source_t *source)
-	{
-		calldata_t params{};
-		proc_handler_call(obs_source_get_proc_handler(source), "get_status", &params);
-		auto result = calldata_int(&params, "generation");
-		calldata_free(&params);
-		return result;
-	}
-	bool capturingTargetAfter(obs_source_t *source, const QString &target, int64_t generation)
-	{
-		calldata_t params{};
-		proc_handler_call(obs_source_get_proc_handler(source), "get_status", &params);
-		bool result = QString::fromUtf8(calldata_string(&params, "status")) == "capturing" &&
-			      calldata_int(&params, "generation") > generation &&
-			      QString::fromUtf8(calldata_string(&params, "target")) == target;
-		calldata_free(&params);
-		return result;
-	}
       private slots:
-	void initTestCase()
-	{
-		if (!qEnvironmentVariableIsSet("M4CAPTURE_LIVE_TEST"))
-			QSKIP("Set M4CAPTURE_LIVE_TEST=1 to capture temporary test windows on KDE Plasma Wayland.");
-		initialize_capture();
-	}
-	void cleanup()
-	{
-		cleanupObs();
-		QTest::qWait(60);
-	}
-	void cleanupTestCase() { shutdown_capture(); }
-
 	void liveDesktopCapture()
 	{
 		QTRY_VERIFY_WITH_TIMEOUT(!capture_displays().isEmpty(), 5000);

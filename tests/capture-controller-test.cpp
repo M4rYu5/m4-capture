@@ -1,76 +1,20 @@
 #include "audio-fixture.hpp"
+#include "capture-test-fixture.hpp"
 #include "capture.hpp"
 #include "kwin-connection.hpp"
 #include "kwin-fixture.hpp"
 #include "pipewire-capture.hpp"
-#include "video-fixture.hpp"
+#include "video-capture-fixture.hpp"
 
 #include <QEvent>
 #include <QSignalSpy>
 #include <QTest>
 #include <vector>
 
-class CaptureControllerTest : public QObject
+class CaptureControllerTest : public CaptureTestFixture
 {
 	Q_OBJECT
-	KWinFixture kwin;
-	const QByteArray originalDisplay = qgetenv("WAYLAND_DISPLAY");
-	const bool hadDisplay = qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
-	std::vector<std::shared_ptr<CaptureState>> captures;
-
-	std::shared_ptr<CaptureState> capture(CaptureConfig config = {}, CaptureMode mode = CaptureMode::Window)
-	{
-		if (config.rule.appId.isEmpty())
-			config.rule.appId = "test.app";
-		auto state = std::make_shared<CaptureState>(1280, 720, CaptureCallbacks{}, mode);
-		state->configure(config);
-		captures.push_back(state);
-		queue_capture_update(state);
-		return state;
-	}
-	QString status(const std::shared_ptr<CaptureState> &state)
-	{
-		return QString::fromUtf8(capture_status_name(state->diagnostics().status));
-	}
-
       private slots:
-	void initTestCase()
-	{
-		QVERIFY(kwin.start());
-		qputenv("WAYLAND_DISPLAY", kwin.socketPath().toUtf8());
-		initialize_capture();
-		kwin.add({"probe", "probe.app", "Probe", false});
-		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 3000);
-		kwin.clear();
-	}
-
-	void init()
-	{
-		kwin.reject = true;
-		kwin.deferCapture = false;
-	}
-
-	void cleanup()
-	{
-		for (const auto &state : captures)
-			release_capture(state);
-		captures.clear();
-		QCoreApplication::sendPostedEvents();
-		kwin.clear();
-		kwin.clearDisplays();
-		QTRY_VERIFY(capture_windows().isEmpty());
-		QTRY_VERIFY(capture_displays().isEmpty());
-	}
-
-	void cleanupTestCase()
-	{
-		shutdown_capture();
-		if (hadDisplay)
-			qputenv("WAYLAND_DISPLAY", originalDisplay);
-		else
-			qunsetenv("WAYLAND_DISPLAY");
-	}
-
 	void absentWindowWaitsWithoutCaptureRequests()
 	{
 		auto target = capture();
@@ -144,7 +88,7 @@ class CaptureControllerTest : public QObject
 
 	void desktopWaitsForSelectedMonitorAndReconnects()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.addDisplay({"DP-1", "Main", {0, 0, 1920, 1080}, 1});
 		CaptureConfig config;
@@ -328,9 +272,9 @@ class CaptureControllerTest : public QObject
 			void removeBuffer(const spa_buffer &) override { ++removed; }
 			void clearImports() override { ++cleared; }
 		};
-		TestVideo video;
-		QVERIFY(video.start());
-		QVERIFY(video.startProducer());
+		VideoCaptureFixture video;
+		QVERIFY(video.server.start());
+		QVERIFY(video.producer.start());
 		auto gpu = std::make_shared<ImportLifetime>();
 		auto frames = std::make_shared<FrameBuffer>(160, 90);
 		for (int stream = 0; stream < 2; ++stream) {
@@ -339,7 +283,8 @@ class CaptureControllerTest : public QObject
 			auto sequence = frames->sequence();
 			auto capture = std::make_unique<PipeWireCapture>(
 			    frames, [](QString error) { QFAIL(qPrintable(error)); }, [](PipeWireStatus) {}, gpu);
-			QVERIFY(capture->start(video.openRemote(), video.nodeId(), QString::number(video.serial())));
+			QVERIFY(capture->start(video.server.openRemote(), video.producer.nodeId(),
+					       QString::number(video.producer.serial())));
 			QTRY_VERIFY_WITH_TIMEOUT(frames->sequence() > sequence, 5000);
 			QVERIFY(gpu->cleared.load() > cleared); // Format negotiation invalidates the prior pool.
 			cleared = gpu->cleared.load();
@@ -524,7 +469,7 @@ class CaptureControllerTest : public QObject
 
 	void backendDisconnectAutomaticallyRecovers()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"backend", "test.app", "Backend reconnect", false});
 		CaptureConfig config;
@@ -627,7 +572,7 @@ class CaptureControllerTest : public QObject
 
 	void hiddenCaptureRequiresFreshFrames()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"visibility", "test.app", "Visibility", false});
 		auto target = capture();
@@ -643,15 +588,15 @@ class CaptureControllerTest : public QObject
 		int requests = kwin.captureRequests;
 		QTest::qWait(150);
 		QCOMPARE(target->frames->sequence(), sequence);
-		QVERIFY(video.setProducerActive(false));
-		video.setColor(0xff20c040u);
+		QVERIFY(video.producer.setActive(false));
+		video.producer.setColor(0xff20c040u);
 		target->setShowing(true);
 		queue_capture_update(target);
 		QTRY_COMPARE(kwin.captureRequests, requests + 1);
 		QTest::qWait(100);
 		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Empty);
 		QCOMPARE(target->frames->sequence(), sequence);
-		QVERIFY(video.setProducerActive(true));
+		QVERIFY(video.producer.setActive(true));
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Updated);
 		QVERIFY(frame.pixels != oldPixels);
@@ -683,9 +628,9 @@ class CaptureControllerTest : public QObject
 		KWinConnection backend(nullptr);
 		QTRY_VERIFY(backend.windowsAvailable());
 		QVERIFY(!backend.available());
-		TestVideo daemon;
+		PipeWireServer daemon;
 		QVERIFY(daemon.start());
-		TestAudio producer;
+		AudioProducer producer;
 		QVERIFY(producer.start(daemon.openRemote(), "test.app"));
 		std::atomic<uint64_t> samples{0};
 		CaptureCallbacks callbacks;
@@ -751,10 +696,10 @@ class CaptureControllerTest : public QObject
 	void captureSourcesHandleInterfaceChanges()
 	{
 		QFETCH(int, interface);
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
-		TestAudio producer;
-		QVERIFY(producer.start(video.openRemote(), "test.app"));
+		AudioProducer producer;
+		QVERIFY(producer.start(video.server.openRemote(), "test.app"));
 		kwin.add({"audio", "test.app", "Application audio", false});
 		kwin.addDisplay({"DP-1", "Display", {0, 0, 160, 90}, 1});
 		auto setAvailable = [&](bool available) {
@@ -804,7 +749,7 @@ class CaptureControllerTest : public QObject
 		QTRY_VERIFY(samples.load() > 0);
 		QTRY_COMPARE(status(windowState), QString("capturing"));
 		QTRY_COMPARE(status(desktopState), QString("capturing"));
-		QTRY_COMPARE(video.audioCapturesCreated(), uint32_t(1));
+		QTRY_COMPARE(video.server.audioCapturesCreated(), uint32_t(1));
 		const auto windowGeneration = windowState->diagnostics().generation;
 		const auto desktopGeneration = desktopState->diagnostics().generation;
 		const bool loseWindows = interface == 0 || interface == 3;
@@ -841,7 +786,7 @@ class CaptureControllerTest : public QObject
 		QTRY_COMPARE_WITH_TIMEOUT(status(windowState), QString("capturing"), 5000);
 		QTRY_COMPARE_WITH_TIMEOUT(status(desktopState), QString("capturing"), 5000);
 		QTRY_VERIFY(samples.load() > count);
-		QCOMPARE(video.audioCapturesCreated(), loseWindows ? uint32_t(2) : uint32_t(1));
+		QCOMPARE(video.server.audioCapturesCreated(), loseWindows ? uint32_t(2) : uint32_t(1));
 		if (!loseWindowVideo)
 			QCOMPARE(windowState->diagnostics().generation, windowGeneration);
 		if (!loseDesktopVideo)
@@ -850,10 +795,10 @@ class CaptureControllerTest : public QObject
 
 	void audioSurvivesVideoRestarts()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
-		TestAudio producer;
-		QVERIFY(producer.start(video.openRemote(), "test.app"));
+		AudioProducer producer;
+		QVERIFY(producer.start(video.server.openRemote(), "test.app"));
 		kwin.add({"audio", "test.app", "Application audio", false});
 		KWinConnection backend(nullptr);
 		QTRY_COMPARE(backend.windows().size(), 1);
@@ -872,7 +817,7 @@ class CaptureControllerTest : public QObject
 		controller.update();
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QTRY_VERIFY(samples.load() > 0);
-		QTRY_COMPARE(video.audioCapturesCreated(), uint32_t(1));
+		QTRY_COMPARE(video.server.audioCapturesCreated(), uint32_t(1));
 
 		int requests = kwin.captureRequests;
 		config.cursor = false;
@@ -880,7 +825,7 @@ class CaptureControllerTest : public QObject
 		controller.update();
 		QTRY_COMPARE(kwin.captureRequests, requests + 1);
 		QTRY_COMPARE(status(target), QString("capturing"));
-		QCOMPARE(video.audioCapturesCreated(), uint32_t(1));
+		QCOMPARE(video.server.audioCapturesCreated(), uint32_t(1));
 
 		kwin.reject = true;
 		config.cursor = true;
@@ -890,24 +835,24 @@ class CaptureControllerTest : public QObject
 		auto count = samples.load();
 		QTest::qWait(150);
 		QVERIFY(samples.load() > count);
-		QCOMPARE(video.audioCapturesCreated(), uint32_t(1));
+		QCOMPARE(video.server.audioCapturesCreated(), uint32_t(1));
 		requests = kwin.captureRequests;
 		kwin.reject = false;
 		QTRY_COMPARE_WITH_TIMEOUT(kwin.captureRequests, requests + 1, 3500);
 		QTRY_COMPARE(status(target), QString("capturing"));
-		QCOMPARE(video.audioCapturesCreated(), uint32_t(1));
+		QCOMPARE(video.server.audioCapturesCreated(), uint32_t(1));
 
 		// Collapsed hide/show updates still discard queued audio from the old producer.
 		target->setShowing(false);
 		target->setShowing(true);
 		controller.update();
-		QTRY_COMPARE(video.audioCapturesCreated(), uint32_t(2));
+		QTRY_COMPARE(video.server.audioCapturesCreated(), uint32_t(2));
 		QTRY_COMPARE(status(target), QString("capturing"));
 	}
 
 	void hiddenCaptureRetainsBackendTrackingWithoutRetries()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.reject = true;
 		kwin.add({"retry-hidden", "test.app", "Hidden retry", false});
@@ -933,17 +878,17 @@ class CaptureControllerTest : public QObject
 
 	void pausedStreamResumesWithoutReselecting()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"paused", "test.app", "Paused stream", false});
 		auto target = capture();
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		int requests = kwin.captureRequests;
-		QVERIFY(video.setProducerActive(false));
+		QVERIFY(video.producer.setActive(false));
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("paused"), 3000);
 		VideoFrame frame;
 		QCOMPARE(target->frames->take(frame), FrameBuffer::Update::Empty);
-		QVERIFY(video.setProducerActive(true));
+		QVERIFY(video.producer.setActive(true));
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QCOMPARE(kwin.captureRequests, requests);
 	}

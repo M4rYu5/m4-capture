@@ -3,17 +3,16 @@
 #include "kwin-fixture.hpp"
 #include "obs-dmabuf.hpp"
 #include "obs-graphics.hpp"
-#include "obs-test-fixture.hpp"
 #include "pixel-fixture.hpp"
-#include "video-fixture.hpp"
+#include "simulated-obs-fixture.hpp"
+#include "video-capture-fixture.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-class CaptureTest : public ObsTestFixture
+class CaptureTest : public SimulatedObsFixture
 {
 	Q_OBJECT
-	KWinFixture kwin;
 
 	QByteArray gpuPixels(const VideoFrame &frame)
 	{
@@ -34,29 +33,6 @@ class CaptureTest : public ObsTestFixture
 		return pixels;
 	}
       private slots:
-	void initTestCase()
-	{
-		QVERIFY(kwin.start());
-		qputenv("WAYLAND_DISPLAY", kwin.socketPath().toUtf8());
-		initialize_capture();
-		kwin.add({"probe", "probe.app", "Probe", false});
-		QTRY_VERIFY_WITH_TIMEOUT(!capture_windows().isEmpty(), 3000);
-		kwin.clear();
-	}
-	void init()
-	{
-		kwin.reject = true;
-		kwin.deferCapture = false;
-	}
-	void cleanup()
-	{
-		cleanupObs();
-		kwin.clear();
-		kwin.clearDisplays();
-		QTest::qWait(60);
-	}
-	void cleanupTestCase() { shutdown_capture(); }
-
 	void statusChangesDoNotReloadProperties()
 	{
 		kwin.deferCapture = true;
@@ -85,7 +61,7 @@ class CaptureTest : public ObsTestFixture
 
 	void desktopSourceCapturesVideoAndSavesSelection()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.addDisplay({"DP-1", "Main display", {0, 0, 1920, 1080}, 1});
 		kwin.addDisplay({"DP-2", "Second display", {-1280, 0, 1280, 720}, 1});
@@ -98,7 +74,7 @@ class CaptureTest : public ObsTestFixture
 		QVERIFY(!(obs_source_get_output_flags(target) & OBS_SOURCE_AUDIO));
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QTRY_COMPARE(renderedPixel(target).alpha(), 255);
-		QCOMPARE(video.audioCapturesCreated(), uint32_t(0));
+		QCOMPARE(video.server.audioCapturesCreated(), uint32_t(0));
 		QCOMPARE(kwin.requestedRegion, QRect(-1280, 0, 3200, 1080));
 		auto props = obs_source_properties(target);
 		auto picker = obs_properties_get(props, "selected_display");
@@ -253,12 +229,12 @@ class CaptureTest : public ObsTestFixture
 
 	void audioOnlyFollowsSceneVisibilityAndTarget()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
-		TestAudio first, second, unrelated;
-		QVERIFY(first.start(video.openRemote(), "test.app"));
-		QVERIFY(second.start(video.openRemote(), "other.app", {{"FL", -.3f}, {"FR", .4f}}));
-		QVERIFY(unrelated.start(video.openRemote(), "unrelated.app"));
+		AudioProducer first, second, unrelated;
+		QVERIFY(first.start(video.server.openRemote(), "test.app"));
+		QVERIFY(second.start(video.server.openRemote(), "other.app", {{"FL", -.3f}, {"FR", .4f}}));
+		QVERIFY(unrelated.start(video.server.openRemote(), "unrelated.app"));
 		kwin.add({"first", "test.app", "First", false, 12345});
 		kwin.add({"second", "other.app", "Second", false, 12346});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -308,12 +284,12 @@ class CaptureTest : public ObsTestFixture
 
 	void applicationAudioFollowsSettingsVisibilityAndTarget()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
-		TestAudio first, second, unrelated;
-		QVERIFY(first.start(video.openRemote(), "test.app"));
-		QVERIFY(second.start(video.openRemote(), "other.app", {{"FL", -.3f}, {"FR", .4f}}));
-		QVERIFY(unrelated.start(video.openRemote(), "unrelated.app"));
+		AudioProducer first, second, unrelated;
+		QVERIFY(first.start(video.server.openRemote(), "test.app"));
+		QVERIFY(second.start(video.server.openRemote(), "other.app", {{"FL", -.3f}, {"FR", .4f}}));
+		QVERIFY(unrelated.start(video.server.openRemote(), "unrelated.app"));
 		kwin.add({"first", "test.app", "First", false, 12345});
 		kwin.add({"second", "other.app", "Second", false, 12346});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -331,14 +307,15 @@ class CaptureTest : public ObsTestFixture
 		QCOMPARE(samples.count.load(), uint64_t(0));
 		int requests = kwin.captureRequests;
 		qputenv("PIPEWIRE_REMOTE", "/nonexistent/m4capture-audio-test");
-		auto restoreRemote = qScopeGuard([&] { qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8()); });
+		auto restoreRemote =
+		    qScopeGuard([&] { qputenv("PIPEWIRE_REMOTE", video.server.socketPath().toUtf8()); });
 		obs_data_set_bool(settings, "capture_audio", true);
 		obs_source_update(target, settings);
 		QTest::qWait(200);
 		QCOMPARE(samples.count.load(), uint64_t(0));
 		QCOMPARE(status(target), QString("capturing"));
 		QCOMPARE(kwin.captureRequests, requests);
-		qputenv("PIPEWIRE_REMOTE", video.socketPath().toUtf8());
+		qputenv("PIPEWIRE_REMOTE", video.server.socketPath().toUtf8());
 		QTRY_VERIFY_WITH_TIMEOUT(samples.count > 0, 5000);
 		QTRY_VERIFY(std::abs(samples.left.load() - .125f) < .0001f);
 		QVERIFY(std::abs(samples.right.load() + .25f) < .0001f);
@@ -435,7 +412,7 @@ class CaptureTest : public ObsTestFixture
 	{
 		QFETCH(bool, differentApp);
 		QFETCH(bool, filterMatches);
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"original", "test.app", "Editor", false});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -473,17 +450,17 @@ class CaptureTest : public ObsTestFixture
 	void clearingWindowSelectionStopsCapture()
 	{
 		QFETCH(bool, audioOnly);
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
-		TestAudio audio;
-		QVERIFY(audio.start(video.openRemote(), "test.app"));
+		AudioProducer audio;
+		QVERIFY(audio.start(video.server.openRemote(), "test.app"));
 		kwin.add({"chosen", "test.app", "Editor", false});
 		QTRY_COMPARE(capture_windows().size(), 1);
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_string(settings, "title_filter", "Editor");
 		obs_data_set_bool(settings, "capture_audio", true);
 		OBSSourceAutoRelease target = createSource("Clear window selection", settings, true,
-							 audioOnly ? "m4capture_audio_source" : "m4capture_source");
+							   audioOnly ? "m4capture_audio_source" : "m4capture_source");
 		ObsAudioRecorder samples(target);
 		auto props = obs_source_properties(target);
 		auto destroyProps = qScopeGuard([&] { obs_properties_destroy(props); });
@@ -534,7 +511,7 @@ class CaptureTest : public ObsTestFixture
 
 	void desktopSelectionReturnsToAllDisplays()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.addDisplay({"DP-1", "Main display", {0, 0, 1920, 1080}, 1});
 		kwin.addDisplay({"DP-2", "Second display", {-1280, 0, 1280, 720}, 1});
@@ -616,7 +593,7 @@ class CaptureTest : public ObsTestFixture
 
 	void focusSwitchesLiveCaptureAndRaisesSource()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		QWidget window;
 		mainWindow = &window;
@@ -678,7 +655,7 @@ class CaptureTest : public ObsTestFixture
 	{
 		QFETCH(uint32_t, alpha);
 		// KWin supplies premultiplied pixels: red and alpha have the same value.
-		TestVideo video((alpha << 24) | (alpha << 16));
+		VideoCaptureFixture video((alpha << 24) | (alpha << 16));
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"translucent", "test.app", "Translucent window", false});
 		OBSSourceAutoRelease target = source("Alpha capture");
@@ -694,7 +671,7 @@ class CaptureTest : public ObsTestFixture
 
 	void videoReconnectsAndKeepsSizeAndCursorChoice()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"first", "test.app", "First title", false});
 		OBSSourceAutoRelease target = source("Video target");
@@ -713,10 +690,10 @@ class CaptureTest : public ObsTestFixture
 		QCOMPARE(renderedPixel(target).alpha(), 0);
 		QCOMPARE(obs_source_get_width(target), uint32_t(160));
 		QCOMPARE(obs_source_get_height(target), uint32_t(90));
-		video.stopProducer();
-		QVERIFY(video.startProducer());
-		kwin.videoNode = video.nodeId();
-		kwin.videoSerial = video.serial();
+		video.producer.stop();
+		QVERIFY(video.producer.start());
+		kwin.videoNode = video.producer.nodeId();
+		kwin.videoSerial = video.producer.serial();
 		kwin.add({"second", "test.app", "Reopened", false});
 		QTRY_COMPARE_WITH_TIMEOUT(status(target), QString("capturing"), 5000);
 		QCOMPARE(kwin.requestedWindow, QString("second"));
@@ -733,7 +710,7 @@ class CaptureTest : public ObsTestFixture
 
 	void legacyManualSettingsDoNotDisableCaptureOrReconnect()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"original", "test.app", "Original window", false});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -757,7 +734,7 @@ class CaptureTest : public ObsTestFixture
 
 	void choosingWindowWhileWaitingStartsCapture()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"original", "test.app", "Original", false});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -790,7 +767,7 @@ class CaptureTest : public ObsTestFixture
 	void titleMismatchDisconnects()
 	{
 		QFETCH(bool, enabled);
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"editor", "test.app", "Other", false});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -830,7 +807,7 @@ class CaptureTest : public ObsTestFixture
 
 	void titleMismatchWithAlternateWindow()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"editor", "test.app", "Editor", false});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -861,7 +838,7 @@ class CaptureTest : public ObsTestFixture
 	void cursorToggleKeepsCurrentWindow()
 	{
 		QFETCH(QString, preferred);
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"first", "test.app", "First", false});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -886,7 +863,7 @@ class CaptureTest : public ObsTestFixture
 
 	void propertyEditsOnlyRestartCaptureWhenNeeded()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"editor", "test.app", "Editor", false});
 		OBSSourceAutoRelease target = source("Editing properties");
@@ -941,7 +918,7 @@ class CaptureTest : public ObsTestFixture
 
 	void cpuFallbackWarning()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"fallback", "test.app", "CPU capture", false});
 		OBSSourceAutoRelease target = source("CPU warning");
@@ -1195,7 +1172,7 @@ class CaptureTest : public ObsTestFixture
 
 	void sceneAndPreviewVisibility()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"visible", "test.app", "Visibility target", false});
 		OBSDataAutoRelease settings = obs_data_create();
@@ -1249,7 +1226,7 @@ class CaptureTest : public ObsTestFixture
 
 	void hiddenSourceTracksReplacementAndResumes()
 	{
-		TestVideo video;
+		VideoCaptureFixture video;
 		QVERIFY(video.startCapture(kwin));
 		kwin.add({"original", "test.app", "Original", false});
 		OBSDataAutoRelease settings = obs_data_create();

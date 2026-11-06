@@ -32,6 +32,20 @@ bool KWinFixture::start(bool advertiseScreencast)
 
 void KWinFixture::flush() { wl_display_flush_clients(display); }
 
+void KWinFixture::resetRequests()
+{
+	reject = true;
+	deferCapture = false;
+	videoNode = 42;
+	videoSerial = 0;
+	captureRequests = 0;
+	cursorMode = 0;
+	requestedWindow.clear();
+	requestedDisplay.clear();
+	requestedRegion = {};
+	requestedScale = 0;
+}
+
 void KWinFixture::disconnectClients() { wl_display_destroy_clients(display); }
 
 void KWinFixture::setScreencastAvailable(bool available)

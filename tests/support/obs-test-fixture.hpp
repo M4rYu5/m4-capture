@@ -12,11 +12,38 @@
 #include <wayland-client.h>
 
 #include <atomic>
+#include <cmath>
 #include <vector>
 
 // Frontend state supplied by the integration tests.
 extern QWidget *mainWindow;
 extern obs_source_t *currentScene;
+
+// Finish OBS source destruction and its queued Qt capture releases while graphics is alive.
+void drain_obs_test_tasks();
+
+class ObsSourceVisibility
+{
+      public:
+	explicit ObsSourceVisibility(obs_source_t *source) : source(source) { setShowing(true); }
+	~ObsSourceVisibility() { setShowing(false); }
+	ObsSourceVisibility(const ObsSourceVisibility &) = delete;
+	ObsSourceVisibility &operator=(const ObsSourceVisibility &) = delete;
+	void setShowing(bool next)
+	{
+		if (next == showing)
+			return;
+		if (next)
+			obs_source_inc_showing(source);
+		else
+			obs_source_dec_showing(source);
+		showing = next;
+	}
+
+      private:
+	OBSSource source;
+	bool showing = false;
+};
 
 // Records OBS audio delivery and unregisters its callback before releasing the source.
 class ObsAudioRecorder
@@ -26,6 +53,11 @@ class ObsAudioRecorder
 	~ObsAudioRecorder();
 	ObsAudioRecorder(const ObsAudioRecorder &) = delete;
 	ObsAudioRecorder &operator=(const ObsAudioRecorder &) = delete;
+	bool matches(float expectedLeft, float expectedRight) const
+	{
+		return count.load() > 0 && std::abs(left.load() - expectedLeft) < .0001f &&
+		       std::abs(right.load() - expectedRight) < .0001f;
+	}
 	std::atomic<uint64_t> count{0};
 	std::atomic<float> left{0}, right{0};
 
@@ -36,6 +68,7 @@ class ObsAudioRecorder
 
 class ObsTestFixture : public QObject
 {
+	Q_OBJECT
       protected:
 	obs_source_t *createSource(const char *name, obs_data_t *settings, bool showing = true,
 				   const char *id = "m4capture_source");
@@ -47,6 +80,9 @@ class ObsTestFixture : public QObject
 
       private:
 	std::vector<OBSWeakSource> shownSources;
+
+      private slots:
+	void cleanup() { cleanupObs(); }
 };
 
 template <typename Test> int run_obs_tests(int argc, char **argv)
@@ -89,6 +125,7 @@ template <typename Test> int run_obs_tests(int argc, char **argv)
 	register_m4capture_audio_source();
 	Test test;
 	int result = QTest::qExec(&test, argc, argv);
+	drain_obs_test_tasks();
 	shutdown_capture();
 	return result;
 }
