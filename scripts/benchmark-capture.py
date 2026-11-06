@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare real KWin capture using the opt-in live capture benchmark."""
+"""Compare real KWin capture using the opt-in capture benchmark."""
 
 import argparse
 import json
@@ -15,7 +15,7 @@ project_version = re.search(r"project\(M4Capture VERSION (\S+)",
 build_dir = project_dir / "out" / f"build-release-v{project_version}"
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--binary", type=Path, default=build_dir / "m4capture-live-tests")
+parser.add_argument("--binary", type=Path, default=build_dir / "m4capture-benchmarks")
 parser.add_argument("--baseline", type=Path, help="Preserved pre-change benchmark executable")
 parser.add_argument("--runs", type=int, default=3)
 parser.add_argument("--output", type=Path, default=build_dir / "capture-performance.json")

@@ -92,8 +92,9 @@ The test suites are organized by dependencies and responsibility:
 | `tests/unit/` | Matching, frame conversion, frame handoff, capture configuration | `unit`, `headless` |
 | `tests/integration/` | KWin protocols, controller lifecycle, PipeWire video and audio | `integration`, `headless` |
 | `tests/obs/` | Source settings, visibility, audio, focus ordering, rendering and DMA-BUF imports | `obs`, `graphics`; imports also have `gpu` |
-| `tests/live/` | Real compositor capture, recovery and performance diagnostics | Explicit command, outside CTest |
+| `tests/live/` | Real compositor capture and recovery | Explicit command, outside CTest |
 | `tests/support/` | Shared servers, producers, scoped state and suite fixtures | Shared libraries |
+| `benchmarks/` | Frame-rate diagnostics and capture performance | Explicit command, outside CTest |
 
 Each suite has its own executable at the build root, such as
 `capture-controller-tests` or `source-settings-tests`. Select groups by label:
@@ -129,8 +130,8 @@ enabling tests in an existing build directory. Explicit `ON` or `OFF` overrides
 persist independently; set an option back to `AUTO` to restore the default.
 Existing cached `ON`/`OFF` values are preserved. To build only unit tests, enable
 `M4CAPTURE_BUILD_TESTS` and set both integration options to `OFF`.
-Live tests and benchmarks share the opt-in `M4CAPTURE_BUILD_LIVE_TESTS` build
-option, off by default. The live executable
+Live tests and benchmarks have separate build
+options, both off by default. The live executable
 requires KDE Plasma Wayland and `M4CAPTURE_LIVE_TEST=1`. Its window reconnection
 check captures a temporary window, closes it, and opens a replacement:
 
@@ -213,12 +214,12 @@ The opt-in benchmark captures its own animated window at 1920×1080 and 3840×21
 with two seconds of warm-up and ten seconds of measurement per sample:
 
 ```sh
-cmake -S . -B out/build-release-v0.3.1 -DCMAKE_BUILD_TYPE=Release -DM4CAPTURE_BUILD_LIVE_TESTS=ON
-cmake --build out/build-release-v0.3.1 --target m4capture-live-tests --parallel
+cmake -S . -B out/build-release-v0.3.1 -DCMAKE_BUILD_TYPE=Release -DM4CAPTURE_BUILD_BENCHMARKS=ON
+cmake --build out/build-release-v0.3.1 --target m4capture-benchmarks --parallel
 python3 scripts/benchmark-capture.py --runs 3
 ```
 
-The script runs `m4capture-live-tests` to compare DMA-BUF and forced CPU fallback,
+The script runs `m4capture-benchmarks` to compare DMA-BUF and forced CPU fallback,
 saves raw logs and JSON under `out/build-release-v0.3.1/`, and reports
 median process CPU usage and prepared frame rates. The benchmark defaults to a
 60 fps OBS output clock; `M4CAPTURE_TEST_FPS_NUM` and `M4CAPTURE_TEST_FPS_DEN`
@@ -235,7 +236,7 @@ fallback, or stream teardown (including hiding the source).
 For a short frame-rate diagnostic across an OBS output-rate change, run:
 
 ```sh
-QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./out/build-release-v0.3.1/m4capture-live-tests liveFrameRateProfile
+QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./out/build-release-v0.3.1/m4capture-benchmarks liveFrameRateProfile
 ```
 
 This logs prepared frames/s at two output rates without enforcing a capture FPS
