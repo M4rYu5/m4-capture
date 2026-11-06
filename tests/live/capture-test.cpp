@@ -376,4 +376,4 @@ class LiveCaptureTest : public LiveObsFixture
 
 int main(int argc, char **argv) { return run_obs_tests<LiveCaptureTest>(argc, argv); }
 
-#include "live-capture-test.moc"
+#include "capture-test.moc"

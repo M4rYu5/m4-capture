@@ -119,14 +119,7 @@ class VideoFrameTest : public QObject
 	void paddedStrideAndOffset()
 	{
 		PixelFixture input;
-		std::vector<uint8_t> padded(36, 255);
-		std::copy_n(input.bytes.data(), 12, padded.data() + 4);
-		std::copy_n(input.bytes.data() + 12, 12, padded.data() + 20);
-		input.plane.data = padded.data();
-		input.plane.maxsize = padded.size();
-		input.chunk.offset = 4;
-		input.chunk.stride = 16;
-		input.chunk.size = 28;
+		input.paddedRows(4, 4);
 		VideoFrame output;
 		QCOMPARE(copy_video_frame(input.buffer, input.format, output), FrameResult::Ready);
 		QCOMPARE(markers(output), QByteArray::fromHex("010203040506"));
@@ -145,14 +138,7 @@ class VideoFrameTest : public QObject
 		PixelFixture input;
 		input.format.format = SPA_VIDEO_FORMAT_BGRx;
 		// Offset each row by one byte to exercise unaligned, padded input.
-		std::vector<uint8_t> padded(30, 0);
-		std::copy_n(input.bytes.data(), 12, padded.data() + 1);
-		std::copy_n(input.bytes.data() + 12, 12, padded.data() + 17);
-		input.plane.data = padded.data();
-		input.plane.maxsize = padded.size();
-		input.chunk.offset = bottomUp ? 17 : 1;
-		input.chunk.stride = bottomUp ? -16 : 16;
-		input.chunk.size = 28;
+		input.paddedRows(4, 1, bottomUp);
 		input.crop.region = {{1, 0}, {2, 2}};
 		VideoFrame output;
 		QCOMPARE(copy_video_frame(input.buffer, input.format, output), FrameResult::Ready);
@@ -169,7 +155,7 @@ class VideoFrameTest : public QObject
 	void invalidAndEmptyBuffers()
 	{
 		PixelFixture input;
-		VideoFrame output{{42}, 1, 1};
+		VideoFrame output{{42}, 1, 1, {}};
 		input.chunk.size = 0;
 		QCOMPARE(copy_video_frame(input.buffer, input.format, output), FrameResult::Empty);
 		input.chunk.size = 24;
