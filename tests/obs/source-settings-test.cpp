@@ -2,6 +2,9 @@
 #include "simulated-obs-fixture.hpp"
 #include "video-capture-fixture.hpp"
 
+#include <chrono>
+#include <future>
+
 class SourceSettingsTest : public SimulatedObsFixture
 {
 	Q_OBJECT
@@ -206,12 +209,35 @@ class SourceSettingsTest : public SimulatedObsFixture
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_bool(settings, "capture_audio", true);
 		obs_data_set_string(settings, "app_id", "other.app");
-		obs_source_update(target, settings);
-		// Save before OBS's video thread applies the deferred update callback.
-		OBSDataAutoRelease saved = obs_save_source(target);
-		OBSDataAutoRelease config = obs_data_get_obj(saved, "settings");
-		QVERIFY(obs_data_get_bool(config, "capture_audio"));
-		QCOMPARE(QString(obs_data_get_string(config, "app_id")), QString("other.app"));
+		{
+			struct VideoThreadPause {
+				std::promise<void> entered, resume;
+				std::future<void> resumed = resume.get_future();
+			} pause;
+			auto entered = pause.entered.get_future();
+			// Release and join the graphics task even if an assertion fails before it starts.
+			auto resumeVideo = qScopeGuard([&] {
+				pause.resume.set_value();
+				obs_queue_task(OBS_TASK_GRAPHICS, [](void *) {}, nullptr, true);
+			});
+			obs_queue_task(
+			    OBS_TASK_GRAPHICS,
+			    [](void *data) {
+				    auto &pause = *static_cast<VideoThreadPause *>(data);
+				    pause.entered.set_value();
+				    pause.resumed.wait();
+			    },
+			    &pause, false);
+			QVERIFY(entered.wait_for(std::chrono::seconds(3)) == std::future_status::ready);
+			obs_source_update(target, settings);
+			QVERIFY(!obs_source_audio_active(target)); // The source update is still deferred.
+			OBSDataAutoRelease saved = obs_save_source(target);
+			OBSDataAutoRelease config = obs_data_get_obj(saved, "settings");
+			QVERIFY(obs_data_get_bool(config, "capture_audio"));
+			QCOMPARE(QString(obs_data_get_string(config, "app_id")), QString("other.app"));
+			QVERIFY(!obs_source_audio_active(target));
+		}
+		QTRY_VERIFY(obs_source_audio_active(target));
 	}
 
 	void choosingWindowReconcilesTitleFilter_data()

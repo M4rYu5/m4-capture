@@ -59,10 +59,10 @@ struct PixelFixture {
 	}
 };
 
-// Scalar reference for rendered BGRA pixels, independent of upload and GPU drawing.
-inline QByteArray reference_video_pixels(const spa_buffer &buffer, const spa_video_info_raw &format)
+// The caller supplies the expected layout independently of production metadata parsing.
+inline QByteArray reference_video_pixels(const spa_buffer &buffer, const spa_video_info_raw &format,
+					 const VideoLayout &layout)
 {
-	auto layout = video_layout(buffer, format);
 	QByteArray result(size_t(layout.outputWidth()) * layout.outputHeight() * 4, Qt::Uninitialized);
 	bool rgb = format.format == SPA_VIDEO_FORMAT_RGBA || format.format == SPA_VIDEO_FORMAT_RGBx;
 	bool opaque = format.format == SPA_VIDEO_FORMAT_BGRx || format.format == SPA_VIDEO_FORMAT_RGBx;

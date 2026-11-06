@@ -45,7 +45,8 @@ class VideoFrameTest : public QObject
 		QCOMPARE(output.layout.rotation, transform & 3);
 		QCOMPARE(output.layout.flip, bool(transform & 4));
 		// The scalar reference also checks the expected display ordering.
-		auto displayed = reference_video_pixels(input.buffer, input.format);
+		const VideoLayout expectedLayout{0, 0, 3, 2, transform & 3, bool(transform & 4)};
+		auto displayed = reference_video_pixels(input.buffer, input.format, expectedLayout);
 		QByteArray displayedMarkers;
 		for (qsizetype i = 0; i < displayed.size(); i += 4)
 			displayedMarkers.append(displayed[i]);
@@ -102,6 +103,27 @@ class VideoFrameTest : public QObject
 		VideoFrame output;
 		QCOMPARE(copy_video_frame(input.buffer, input.format, output), FrameResult::Ready);
 		QCOMPARE(output.pixels, std::vector<uint8_t>(input.bytes.begin() + 12, input.bytes.begin() + 36));
+		QCOMPARE(output.width, 3u);
+		QCOMPARE(output.height, 2u);
+	}
+
+	void cropWithBothOffsets()
+	{
+		PixelFixture input(5, 4);
+		input.crop.region = {{1, 1}, {3, 2}};
+		// Rows are 1..5, 6..10, 11..15, 16..20; the crop is 7,8,9 / 12,13,14.
+		const auto expected = QByteArray::fromHex("07141e2808141e2809141e280c141e280d141e280e141e28");
+		const VideoLayout expectedLayout{1, 1, 3, 2};
+		QCOMPARE(reference_video_pixels(input.buffer, input.format, expectedLayout), expected);
+		const auto layout = video_layout(input.buffer, input.format);
+		QCOMPARE(layout.x, 1u);
+		QCOMPARE(layout.y, 1u);
+		QCOMPARE(layout.width, 3u);
+		QCOMPARE(layout.height, 2u);
+		VideoFrame output;
+		QCOMPARE(copy_video_frame(input.buffer, input.format, output), FrameResult::Ready);
+		QCOMPARE(QByteArray(reinterpret_cast<const char *>(output.pixels.data()), output.pixels.size()),
+			 expected);
 		QCOMPARE(output.width, 3u);
 		QCOMPARE(output.height, 2u);
 	}

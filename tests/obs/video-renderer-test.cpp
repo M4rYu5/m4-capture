@@ -45,7 +45,9 @@ class VideoRendererTest : public ObsTestFixture
 		}
 		constexpr uint32_t rowPadding = 7, byteOffset = 1;
 		auto &padded = input.paddedRows(rowPadding, byteOffset, bottomUp);
-		auto expected = reference_video_pixels(input.buffer, input.format);
+		const VideoLayout expectedLayout{crop ? 1u : 0u, crop ? 1u : 0u, crop ? 3u : 5u,
+						 crop ? 2u : 3u, transform & 3,	 bool(transform & 4)};
+		auto expected = reference_video_pixels(input.buffer, input.format, expectedLayout);
 		VideoFrame frame;
 		QCOMPARE(copy_video_frame(input.buffer, input.format, frame), FrameResult::Ready);
 		// PipeWire can immediately overwrite the input once the CPU copy is published.
@@ -74,8 +76,10 @@ class VideoRendererTest : public ObsTestFixture
 				QCOMPARE(copy_video_frame(input.buffer, input.format, frame), FrameResult::Ready);
 				QCOMPARE(frame.width, 5u);
 				QCOMPARE(frame.height, 3u);
+				const VideoLayout expectedLayout{0, 0, (transform & 1) ? 3u : 5u,
+								 (transform & 1) ? 5u : 3u, transform};
 				QCOMPARE(rendererPixels(renderer, frame),
-					 reference_video_pixels(input.buffer, input.format));
+					 reference_video_pixels(input.buffer, input.format, expectedLayout));
 			}
 		}
 	}

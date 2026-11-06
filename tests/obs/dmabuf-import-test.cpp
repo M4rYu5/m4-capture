@@ -69,12 +69,13 @@ class DmaBufImportTest : public ObsTestFixture
 		buffer.datas = &plane;
 		auto format = input.format;
 		format.format = opaque ? SPA_VIDEO_FORMAT_BGRx : SPA_VIDEO_FORMAT_BGRA;
-		auto expected = reference_video_pixels(buffer, format);
-		auto layout = video_layout(buffer, format);
+		const VideoLayout expectedLayout{crop ? 1u : 0u,  crop ? 2u : 0u, crop ? 13u : 16u,
+						 crop ? 7u : 12u, transform & 3,  bool(transform & 4)};
+		auto expected = reference_video_pixels(buffer, format, expectedLayout);
 		VideoFrame actual;
 		QCOMPARE(capture->copy(input.buffer, input.format, actual), FrameResult::Ready);
-		QCOMPARE(actual.width, layout.outputWidth());
-		QCOMPARE(actual.height, layout.outputHeight());
+		QCOMPARE(actual.width, expectedLayout.outputWidth());
+		QCOMPARE(actual.height, expectedLayout.outputHeight());
 		QVERIFY(actual.pixels.empty());
 		QCOMPARE(gpuPixels(actual), expected);
 	}
@@ -97,7 +98,9 @@ class DmaBufImportTest : public ObsTestFixture
 			cpu.transform.transform = SPA_META_TRANSFORMATION_Flipped90;
 			QCOMPARE(copy_video_frame(cpu.buffer, cpu.format, frame), FrameResult::Ready);
 			QVERIFY(!frame.gpu);
-			QCOMPARE(rendererPixels(renderer, frame), reference_video_pixels(cpu.buffer, cpu.format));
+			const VideoLayout expectedLayout{0, 0, 16, 16, 1, true};
+			QCOMPARE(rendererPixels(renderer, frame),
+				 reference_video_pixels(cpu.buffer, cpu.format, expectedLayout));
 		}
 	}
 
