@@ -19,6 +19,7 @@ class KWinFixture : public QObject
       public:
 	~KWinFixture() override;
 	bool start(bool advertiseScreencast = true);
+	void resetRequests();
 	void add(const WindowInfo &window);
 	void remove(const QString &uuid);
 	void clear();

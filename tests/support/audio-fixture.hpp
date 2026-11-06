@@ -7,10 +7,10 @@
 #include <vector>
 
 // Constant DSP samples on an isolated daemon, with application identity metadata.
-class TestAudio
+class AudioProducer
 {
       public:
-	~TestAudio();
+	~AudioProducer();
 	bool start(int fd, const char *appId,
 		   std::initializer_list<std::pair<const char *, float>> samples = {{"FL", .125f}, {"FR", -.25f}},
 		   uint32_t pid = 1);

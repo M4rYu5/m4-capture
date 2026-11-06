@@ -18,7 +18,7 @@ class FrameBufferTest : public QObject
 	void latestFrameIsConsumedOnce()
 	{
 		FrameBuffer buffer;
-		VideoFrame input{{1, 2, 3, 4}, 1, 1};
+		VideoFrame input{{1, 2, 3, 4}, 1, 1, {}};
 		QVERIFY(buffer.publish(input));
 		input.pixels = {5, 6, 7, 8};
 		QVERIFY(!buffer.publish(input));
@@ -34,17 +34,17 @@ class FrameBufferTest : public QObject
 	void resizeAndClearNotifyNextFrame()
 	{
 		FrameBuffer buffer;
-		VideoFrame input{{1, 2, 3, 4}, 1, 1};
+		VideoFrame input{{1, 2, 3, 4}, 1, 1, {}};
 		QVERIFY(buffer.publish(input));
 		VideoFrame output;
 		QCOMPARE(buffer.take(output), FrameBuffer::Update::Updated);
-		input = {{5, 6, 7, 8, 9, 10, 11, 12}, 2, 1};
+		input = {{5, 6, 7, 8, 9, 10, 11, 12}, 2, 1, {}};
 		QVERIFY(buffer.publish(input));
 		buffer.clear();
 		QCOMPARE(buffer.take(output), FrameBuffer::Update::Empty);
 		QCOMPARE(buffer.size().width, 2u);
 		QCOMPARE(buffer.size().height, 1u);
-		input = {{13, 14, 15, 16, 17, 18, 19, 20}, 2, 1};
+		input = {{13, 14, 15, 16, 17, 18, 19, 20}, 2, 1, {}};
 		QVERIFY(buffer.publish(input));
 		QCOMPARE(buffer.take(output), FrameBuffer::Update::Updated);
 		QCOMPARE(output.width, 2u);
@@ -73,7 +73,7 @@ class FrameBufferTest : public QObject
 	void nativeMetadataFollowsPixels()
 	{
 		FrameBuffer buffer;
-		VideoFrame input{{1, 2, 3, 4}, 2, 3};
+		VideoFrame input{{1, 2, 3, 4}, 2, 3, {}};
 		input.layout = {0, 0, 3, 2, 1, true};
 		input.format = SPA_VIDEO_FORMAT_RGBx;
 		QVERIFY(buffer.publish(input));
@@ -101,11 +101,11 @@ class FrameBufferTest : public QObject
 	void disabledBufferRejectsInFlightFrames()
 	{
 		FrameBuffer buffer;
-		VideoFrame input{{1, 2, 3, 4}, 1, 1};
+		VideoFrame input{{1, 2, 3, 4}, 1, 1, {}};
 		QVERIFY(buffer.publish(input));
 		auto sequence = buffer.sequence();
 		buffer.setEnabled(false);
-		input = {{5, 6, 7, 8}, 1, 1};
+		input = {{5, 6, 7, 8}, 1, 1, {}};
 		QVERIFY(!buffer.publish(input));
 		QCOMPARE(buffer.sequence(), sequence);
 		VideoFrame output;

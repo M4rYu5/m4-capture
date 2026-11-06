@@ -4,7 +4,7 @@
 #include <spa/node/io.h>
 #include <unistd.h>
 
-TestAudio::~TestAudio()
+AudioProducer::~AudioProducer()
 {
 	if (started)
 		pw_thread_loop_stop(loop);
@@ -18,8 +18,8 @@ TestAudio::~TestAudio()
 		pw_thread_loop_destroy(loop);
 }
 
-bool TestAudio::start(int fd, const char *appId, std::initializer_list<std::pair<const char *, float>> samples,
-		      uint32_t pid)
+bool AudioProducer::start(int fd, const char *appId, std::initializer_list<std::pair<const char *, float>> samples,
+			  uint32_t pid)
 {
 	loop = pw_thread_loop_new("m4capture-test-audio", nullptr);
 	context = loop ? pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0) : nullptr;
@@ -41,7 +41,7 @@ bool TestAudio::start(int fd, const char *appId, std::initializer_list<std::pair
 		pw_filter_events e{};
 		e.version = PW_VERSION_FILTER_EVENTS;
 		e.process = [](void *data, spa_io_position *position) {
-			auto self = static_cast<TestAudio *>(data);
+			auto self = static_cast<AudioProducer *>(data);
 			for (auto port : self->ports) {
 				auto buffer =
 				    static_cast<float *>(pw_filter_get_dsp_buffer(port, position->clock.duration));
@@ -69,7 +69,7 @@ bool TestAudio::start(int fd, const char *appId, std::initializer_list<std::pair
 	return true;
 }
 
-bool TestAudio::setIdentity(const char *appId, uint32_t pid, bool onClient)
+bool AudioProducer::setIdentity(const char *appId, uint32_t pid, bool onClient)
 {
 	auto props = pw_properties_new(PW_KEY_APP_ID, appId, nullptr);
 	pw_properties_setf(props, PW_KEY_APP_PROCESS_ID, "%u", pid);

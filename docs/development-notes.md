@@ -8,7 +8,9 @@ Run the commands below from the project directory.
 - Linux, OBS Studio 32+ development headers and frontend API, and Qt 6 Core.
 - PipeWire 1.2+, Wayland, libdrm, and OpenGL development headers.
 - A C++17 compiler, CMake 3.24+, Ninja, pkg-config, `wayland-scanner`, and `pgrep`.
-- For tests: Qt 6 Test, Qt 6 Widgets, Wayland server development headers, and EGL.
+- For unit tests: Qt 6 Test. Protocol integration tests also need Wayland server
+  development headers and the `pipewire` executable. OBS tests, live checks and
+  benchmarks additionally need Qt 6 Widgets, EGL, and a Wayland graphics session.
 
 See the [installation instructions](../README.md#install) for Arch Linux packages.
 
@@ -78,36 +80,72 @@ and removed when the source is saved.
 ## Development checks
 
 ```sh
-cmake -S . -B out/build-debug-v0.3.1 -DM4CAPTURE_BUILD_TESTS=ON
-cmake --build out/build-debug-v0.3.1 --parallel
-ctest --test-dir out/build-debug-v0.3.1 --output-on-failure
+cmake -S . -B out/build-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DM4CAPTURE_BUILD_TESTS=ON
+cmake --build out/build-tests --parallel
+ctest --test-dir out/build-tests --output-on-failure
 ```
 
-Window matching, frame conversion, frame handoff, and capture-controller tests
-run without a desktop session. The controller tests use a simulated KWin Wayland
-server and an isolated PipeWire daemon with generated video; they do not link OBS
-or initialize graphics. Run these checks with:
+The test suites are organized by dependencies and responsibility:
+
+| Directory | Scope | CTest labels |
+| --- | --- | --- |
+| `tests/unit/` | Matching, frame conversion, frame handoff, capture configuration | `unit`, `headless` |
+| `tests/integration/` | KWin protocols, controller lifecycle, PipeWire video and audio | `integration`, `headless` |
+| `tests/obs/` | Source settings, visibility, audio, focus ordering, rendering and DMA-BUF imports | `obs`, `graphics`; imports also have `gpu` |
+| `tests/live/` | Real compositor capture and recovery | Explicit command, outside CTest |
+| `tests/support/` | Shared servers, producers, scoped state and suite fixtures | Shared libraries |
+| `benchmarks/` | Frame-rate diagnostics and capture performance | Explicit command, outside CTest |
+
+Each suite has its own executable at the build root, such as
+`capture-controller-tests` or `source-settings-tests`. Select groups by label:
 
 ```sh
-env -u WAYLAND_DISPLAY -u DISPLAY ctest --test-dir out/build-debug-v0.3.1 -R 'window-rule|video-frame|frame-buffer|capture-controller' --output-on-failure
+ctest --test-dir out/build-tests -L unit --output-on-failure
+ctest --test-dir out/build-tests -L integration --output-on-failure
+ctest --test-dir out/build-tests -L obs --output-on-failure
 ```
 
-The `obs-integration` tests exercise settings, cursor modes, rendering, and
-focus-driven ordering in real OBS scenes/groups. They use simulated capture
-servers and the running Wayland session to initialize libobs graphics.
-
-The separate `m4capture-live-tests` executable contains real KWin capture tests,
-frame-rate diagnostics, and the performance benchmark. It requires KDE Plasma
-Wayland and `M4CAPTURE_LIVE_TEST=1`; it is built with the test targets but is not
-part of the default CTest run. `m4capture-tests` always uses simulated capture
-servers, regardless of that environment variable.
-
-The live reconnection test captures only its own temporary window, closes it,
-and opens a replacement:
+Unit and protocol integration tests run without a desktop session. Integration
+tests use a simulated KWin Wayland server and an isolated PipeWire daemon with
+generated media. `PipeWireServer`, `VideoProducer` and `AudioProducer` can be
+used independently; `VideoCaptureFixture` combines the server and video producer
+for the complete video capture path. Shared fixtures restore environment variables and release runtime
+state between suites. To configure just the headless suites:
 
 ```sh
-QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./out/build-debug-v0.3.1/m4capture-live-tests liveM4Capture
+cmake -S . -B out/build-headless -G Ninja -DCMAKE_BUILD_TYPE=Debug -DM4CAPTURE_BUILD_TESTS=ON -DM4CAPTURE_BUILD_OBS_TESTS=OFF
+cmake --build out/build-headless --parallel
+env -u WAYLAND_DISPLAY -u DISPLAY ctest --test-dir out/build-headless -L headless --output-on-failure
 ```
+
+The project still requires the plugin's OBS development dependencies at configure
+time. The headless test targets do not initialize OBS or require Qt Widgets/EGL
+as additional test dependencies. OBS suites use the running Wayland session for
+libobs graphics. Renderer and import suites initialize graphics without starting
+simulated capture servers.
+
+`M4CAPTURE_BUILD_INTEGRATION_TESTS` and `M4CAPTURE_BUILD_OBS_TESTS` default to
+`AUTO`, which follows `M4CAPTURE_BUILD_TESTS` on every configure, including when
+enabling tests in an existing build directory. Explicit `ON` or `OFF` overrides
+persist independently; set an option back to `AUTO` to restore the default.
+Existing cached `ON`/`OFF` values are preserved. To build only unit tests, enable
+`M4CAPTURE_BUILD_TESTS` and set both integration options to `OFF`.
+Live tests and benchmarks have separate build
+options, both off by default. The live executable
+requires KDE Plasma Wayland and `M4CAPTURE_LIVE_TEST=1`. Its window reconnection
+check captures a temporary window, closes it, and opens a replacement:
+
+```sh
+cmake -S . -B out/build-tests -DM4CAPTURE_BUILD_LIVE_TESTS=ON
+cmake --build out/build-tests --target m4capture-live-tests --parallel
+QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./out/build-tests/m4capture-live-tests liveM4Capture
+```
+
+When adding cases, keep one behavior or coherent transition sequence per test.
+Use data rows for variations with the same setup and expectations. Keep assertions
+in the test body, use observable readiness for asynchronous setup, and reserve
+fixed observation periods for proving that an event does not occur. Keep explicit
+expected pixel values alongside reference-renderer comparisons.
 
 ## Implementation
 
@@ -176,12 +214,12 @@ The opt-in benchmark captures its own animated window at 1920×1080 and 3840×21
 with two seconds of warm-up and ten seconds of measurement per sample:
 
 ```sh
-cmake -S . -B out/build-release-v0.3.1 -DCMAKE_BUILD_TYPE=Release -DM4CAPTURE_BUILD_TESTS=ON
-cmake --build out/build-release-v0.3.1 --target m4capture-live-tests --parallel
+cmake -S . -B out/build-release-v0.3.1 -DCMAKE_BUILD_TYPE=Release -DM4CAPTURE_BUILD_BENCHMARKS=ON
+cmake --build out/build-release-v0.3.1 --target m4capture-benchmarks --parallel
 python3 scripts/benchmark-capture.py --runs 3
 ```
 
-The script runs `m4capture-live-tests` to compare DMA-BUF and forced CPU fallback,
+The script runs `m4capture-benchmarks` to compare DMA-BUF and forced CPU fallback,
 saves raw logs and JSON under `out/build-release-v0.3.1/`, and reports
 median process CPU usage and prepared frame rates. The benchmark defaults to a
 60 fps OBS output clock; `M4CAPTURE_TEST_FPS_NUM` and `M4CAPTURE_TEST_FPS_DEN`
@@ -198,7 +236,7 @@ fallback, or stream teardown (including hiding the source).
 For a short frame-rate diagnostic across an OBS output-rate change, run:
 
 ```sh
-QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./out/build-release-v0.3.1/m4capture-live-tests liveFrameRateProfile
+QT_QPA_PLATFORM=wayland M4CAPTURE_LIVE_TEST=1 ./out/build-release-v0.3.1/m4capture-benchmarks liveFrameRateProfile
 ```
 
 This logs prepared frames/s at two output rates without enforcing a capture FPS

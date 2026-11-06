@@ -1,6 +1,7 @@
 #include "audio-fixture.hpp"
 #include "pipewire-audio.hpp"
-#include "video-fixture.hpp"
+#include "pipewire-server.hpp"
+#include "scoped-environment.hpp"
 
 #include <QScopeGuard>
 #include <QTest>
@@ -13,8 +14,6 @@
 class PipeWireAudioTest : public QObject
 {
 	Q_OBJECT
-	const QByteArray originalRemote = qgetenv("PIPEWIRE_REMOTE");
-	const bool hadRemote = qEnvironmentVariableIsSet("PIPEWIRE_REMOTE");
 	std::mutex mutex;
 	float left = 0, right = 0;
 	uint32_t rate = 0;
@@ -48,21 +47,15 @@ class PipeWireAudioTest : public QObject
 		rate = timestamp = callbacks = 0;
 		error.clear();
 	}
-	void cleanup()
-	{
-		if (hadRemote)
-			qputenv("PIPEWIRE_REMOTE", originalRemote);
-		else
-			qunsetenv("PIPEWIRE_REMOTE");
-		QVERIFY2(error.isEmpty(), qPrintable(error));
-	}
+	void cleanup() { QVERIFY2(error.isEmpty(), qPrintable(error)); }
 
 	void selectsMixesAndReconnects()
 	{
-		TestVideo daemon;
+		PipeWireServer daemon;
 		QVERIFY(daemon.start());
-		qputenv("PIPEWIRE_REMOTE", daemon.socketPath().toUtf8());
-		TestAudio unrelated;
+		ScopedEnvironment remote("PIPEWIRE_REMOTE");
+		remote.set(daemon.socketPath().toUtf8());
+		AudioProducer unrelated;
 		QVERIFY(unrelated.start(daemon.openRemote(), "unrelated.app", {{"FL", .8f}, {"FR", .8f}}));
 		PipeWireAudioCapture capture(
 		    "test.app", 0, [this](auto &f) { received(f); }, [this](auto e) { failed(e); });
@@ -73,24 +66,25 @@ class PipeWireAudioTest : public QObject
 			QCOMPARE(left, 0.f);
 			QCOMPARE(right, 0.f);
 		}
-		auto first = std::make_unique<TestAudio>();
+		auto first = std::make_unique<AudioProducer>();
 		QVERIFY(first->start(daemon.openRemote(), "test.app"));
 		QTRY_VERIFY_WITH_TIMEOUT(samples(.125f, -.25f), 5000);
-		TestAudio second;
+		AudioProducer second;
 		QVERIFY(second.start(daemon.openRemote(), "test.app", {{"FL", .25f}, {"FR", .125f}}));
 		QTRY_VERIFY_WITH_TIMEOUT(samples(.375f, -.125f), 5000);
 		first.reset();
 		QTRY_VERIFY_WITH_TIMEOUT(samples(.25f, .125f), 5000);
-		first = std::make_unique<TestAudio>();
+		first = std::make_unique<AudioProducer>();
 		QVERIFY(first->start(daemon.openRemote(), "test.app"));
 		QTRY_VERIFY_WITH_TIMEOUT(samples(.375f, -.125f), 5000);
 	}
 
 	void capturesProcessAndChildren()
 	{
-		TestVideo daemon;
+		PipeWireServer daemon;
 		QVERIFY(daemon.start());
-		qputenv("PIPEWIRE_REMOTE", daemon.socketPath().toUtf8());
+		ScopedEnvironment remote("PIPEWIRE_REMOTE");
+		remote.set(daemon.socketPath().toUtf8());
 		QProcess child;
 		child.start("sleep", {"30"});
 		QVERIFY(child.waitForStarted());
@@ -98,7 +92,7 @@ class PipeWireAudioTest : public QObject
 			child.terminate();
 			child.waitForFinished();
 		});
-		TestAudio first, second, unrelated;
+		AudioProducer first, second, unrelated;
 		QVERIFY(first.start(daemon.openRemote(), "foreign.app", {{"FL", .1f}, {"FR", .2f}}, getpid()));
 		QVERIFY(second.start(daemon.openRemote(), "child.app", {{"FL", .2f}, {"FR", .1f}}, child.processId()));
 		QVERIFY(unrelated.start(daemon.openRemote(), "unrelated.app"));
@@ -110,10 +104,11 @@ class PipeWireAudioTest : public QObject
 
 	void downmixesMonoAndSurround()
 	{
-		TestVideo daemon;
+		PipeWireServer daemon;
 		QVERIFY(daemon.start());
-		qputenv("PIPEWIRE_REMOTE", daemon.socketPath().toUtf8());
-		TestAudio producer;
+		ScopedEnvironment remote("PIPEWIRE_REMOTE");
+		remote.set(daemon.socketPath().toUtf8());
+		AudioProducer producer;
 		QVERIFY(producer.start(daemon.openRemote(), "test.app",
 				       {{"MONO", .1f}, {"FC", .2f}, {"RL", .3f}, {"SR", .4f}}));
 		PipeWireAudioCapture capture(
@@ -132,13 +127,14 @@ class PipeWireAudioTest : public QObject
 	void identityChangesInvalidateMatches()
 	{
 		QFETCH(bool, onClient);
-		TestVideo daemon;
+		PipeWireServer daemon;
 		QVERIFY(daemon.start());
-		qputenv("PIPEWIRE_REMOTE", daemon.socketPath().toUtf8());
+		ScopedEnvironment remote("PIPEWIRE_REMOTE");
+		remote.set(daemon.socketPath().toUtf8());
 		// Keep the graph running when the stream under test is unmatched.
-		TestAudio baseline;
+		AudioProducer baseline;
 		QVERIFY(baseline.start(daemon.openRemote(), "test.app", {{"FL", .25f}, {"FR", .125f}}));
-		TestAudio producer;
+		AudioProducer producer;
 		QVERIFY(producer.start(daemon.openRemote(), "foreign.app"));
 		PipeWireAudioCapture capture(
 		    "test.app", getpid(), [this](auto &f) { received(f); }, [this](auto e) { failed(e); });
@@ -156,10 +152,11 @@ class PipeWireAudioTest : public QObject
 
 	void slowConsumerDoesNotBlockCapture()
 	{
-		TestVideo daemon;
+		PipeWireServer daemon;
 		QVERIFY(daemon.start());
-		qputenv("PIPEWIRE_REMOTE", daemon.socketPath().toUtf8());
-		TestAudio producer;
+		ScopedEnvironment remote("PIPEWIRE_REMOTE");
+		remote.set(daemon.socketPath().toUtf8());
+		AudioProducer producer;
 		QVERIFY(producer.start(daemon.openRemote(), "test.app"));
 		std::mutex deliveryMutex;
 		std::condition_variable ready;
